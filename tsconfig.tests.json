@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "shared/tests",
+    "backend/tests",
+    "frontend/tests",
+    "frontend/e2e",
+    "anchor/tests",
+    "playwright.config.ts"
+  ]
+}

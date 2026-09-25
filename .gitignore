@@ -2,5 +2,12 @@ node_modules/
 dist/
 target/
 .env
-.env.local
+.env.*
+!.env.example
 .DS_Store
+*.tsbuildinfo
+*-keypair.json
+frontend/public/idl/
+
+playwright-report/
+test-results/

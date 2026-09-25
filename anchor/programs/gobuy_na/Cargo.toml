@@ -1,0 +1,23 @@
+[package]
+name = "gobuy_na"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "gobuy_na"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+[dependencies]
+anchor-lang = "=1.2.0"
+solana-sha256-hasher = { version = "3.1.0", features = ["sha2"] }

@@ -2,10 +2,25 @@
   "name": "gobuy",
   "private": true,
   "workspaces": [
-    "frontend"
+    "frontend",
+    "backend",
+    "shared"
   ],
   "scripts": {
     "dev": "npm run dev -w frontend",
-    "build": "npm run build -w frontend"
+    "dev:backend": "npm run dev -w backend",
+    "build": "npm run build -w shared && npm run build -w backend && npm run build -w frontend",
+    "lint": "npm run build -w shared && npm run lint --workspaces --if-present && tsc -p tsconfig.tests.json",
+    "test": "npm run build -w shared && node --import tsx --test shared/tests/*.test.ts backend/tests/*.test.ts frontend/tests/*.test.ts",
+    "test:anchor": "node --import tsx --test anchor/tests/*.test.ts",
+    "anchor:configure": "node scripts/configure-anchor.mjs",
+    "anchor:idl": "node scripts/copy-idl.mjs",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.5",
+    "typescript": "~5.8.3"
   }
 }
