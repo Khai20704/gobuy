@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app'
 import { connectAuthEmulator, getAuth } from 'firebase/auth'
+import { apiUrl } from '../../services/api/baseUrl'
 
 const env = import.meta.env
 export const phoneTestMode = env.DEV && ['localhost', '127.0.0.1'].includes(window.location.hostname) && env.VITE_FIREBASE_PHONE_TEST_MODE === 'true'
@@ -21,7 +22,7 @@ export async function accountFetch(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers)
   headers.set('Authorization', 'Bearer ' + await user.getIdToken())
   headers.set('Content-Type', 'application/json')
-  return fetch(path, { ...init, headers, signal: init.signal ?? AbortSignal.timeout(15000) })
+  return fetch(apiUrl(path), { ...init, headers, signal: init.signal ?? AbortSignal.timeout(15000) })
 }
 export function authMessage(error: unknown): string {
   const code = (error as { code?: string })?.code

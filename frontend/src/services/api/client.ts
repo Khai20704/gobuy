@@ -1,6 +1,7 @@
 import { searchResponseSchema, type SearchRequest } from '@gobuy/shared'
+import { apiUrl } from './baseUrl'
 export async function discover(request: SearchRequest, signal?: AbortSignal) {
-  const response = await fetch('/api/proposals/search', {
+  const response = await fetch(apiUrl('/api/proposals/search'), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request), signal: signal ?? AbortSignal.timeout(20000),
   })

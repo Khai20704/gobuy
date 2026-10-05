@@ -1,10 +1,11 @@
 import { useState } from 'react'
+import { apiUrl } from '../../../services/api/baseUrl'
 export function ExtensionPairing() {
   const [code, setCode] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   async function request(revoke = false) {
     setBusy(true); setError('')
     try {
-      const response = await fetch('/api/research/' + (revoke ? 'extension-sessions' : 'pair-code'), { method: revoke ? 'DELETE' : 'POST', credentials: 'same-origin',
+      const response = await fetch(apiUrl('/api/research/' + (revoke ? 'extension-sessions' : 'pair-code')), { method: revoke ? 'DELETE' : 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' }, body: revoke ? undefined : '{}' })
       if (!response.ok) throw new Error('Could not update extension pairing. Check the backend.')
       setCode(revoke ? '' : (await response.json()).code)

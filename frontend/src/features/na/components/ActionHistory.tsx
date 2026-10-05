@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { actionLogSchema, type ActionLog } from '@gobuy/shared'
 import { explorerTx } from '../../../services/solana/links'
+import { apiUrl } from '../../../services/api/baseUrl'
 export function ActionHistory() {
   const [rows, setRows] = useState<ActionLog[]>([]), [error, setError] = useState('')
   useEffect(() => { let active = true
-    void fetch('/api/research/actions', { credentials: 'same-origin' }).then(async r => {
+    void fetch(apiUrl('/api/research/actions'), { credentials: 'same-origin' }).then(async r => {
       if (!r.ok) throw new Error('Action history unavailable.')
       const data = actionLogSchema.array().parse(await r.json()); if (active) setRows(data)
     }).catch(() => { if (active) setError('Action history unavailable. Retry after reconnecting the backend.') })

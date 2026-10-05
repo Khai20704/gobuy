@@ -1,8 +1,9 @@
 import { commerceTwinSchema, researchResponseSchema, decisionResponseSchema,
   type PurchaseIntent, type DecisionInput, type TwinPreferences } from '@gobuy/shared'
+import { apiUrl } from './baseUrl'
 
 async function request(path: string, method = 'GET', body?: unknown) {
-  const response = await fetch('/api/research' + path, {
+  const response = await fetch(apiUrl('/api/research' + path), {
     method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(300000),
   })
