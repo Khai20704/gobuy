@@ -1,4 +1,5 @@
-import { applicationDefault, initializeApp } from 'firebase-admin/app'
+import { initializeApp } from 'firebase-admin/app'
+import { firebaseCredential } from '../auth/firebaseCredential.js'
 import { getAuth } from 'firebase-admin/auth'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
@@ -19,7 +20,7 @@ try {
   if (!projectId) throw new Error('Missing project')
   const emulator = process.env.FIREBASE_AUTH_EMULATOR_HOST
   if (emulator && (process.env.NODE_ENV === 'production' || !projectId.startsWith('demo-') || !/^(localhost|127\.0\.0\.1):\d+$/.test(emulator))) throw new Error('Unsafe emulator')
-  const auth = getAuth(initializeApp({ projectId, ...(emulator ? {} : { credential: applicationDefault() }) }, 'mongo-migration'))
+  const auth = getAuth(initializeApp({ projectId, ...(emulator ? {} : { credential: firebaseCredential() }) }, 'mongo-migration'))
   const uids: string[] = []
   let pageToken: string | undefined
   do {

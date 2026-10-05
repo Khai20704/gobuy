@@ -4,7 +4,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { Router, type RequestHandler } from 'express'
-import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app'
+import { getApps, initializeApp } from 'firebase-admin/app'
+import { firebaseCredential } from './firebaseCredential.js'
 import { getAuth } from 'firebase-admin/auth'
 import { shippingAddressSchema, type ShippingAddress, type AccountProfile } from '@gobuy/shared'
 
@@ -34,7 +35,7 @@ export class FirebaseIdentityVerifier implements IdentityVerifier {
     const emulator = process.env.FIREBASE_AUTH_EMULATOR_HOST
     if (emulator && (process.env.NODE_ENV === 'production' || !/^(localhost|127\.0\.0\.1):\d+$/.test(emulator) || !projectId.startsWith('demo-'))) throw new Error('Unsafe emulator configuration')
     const app = getApps().find(item => item.name === 'na-accounts') ?? initializeApp({ projectId,
-      ...(emulator ? {} : { credential: applicationDefault() }),
+      ...(emulator ? {} : { credential: firebaseCredential() }),
     }, 'na-accounts')
     const auth = getAuth(app)
     const decoded = await auth.verifyIdToken(token, true)
