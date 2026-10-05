@@ -1,0 +1,22 @@
+{
+  "name": "@gobuy/tensor-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@solana/web3.js": "2.0.0",
+    "@tensor-foundation/marketplace": "1.0.0",
+    "@tensor-foundation/mpl-token-metadata": "1.0.0-beta.1",
+    "@tensor-foundation/resolvers": "1.0.0-beta.1"
+  }
+}

@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import { publicKeyBytes } from './addresses.js'
+export { base58Decode, publicKeyBytes } from './addresses.js'
+export const publicKeySchema = z.string().refine(value => { try { publicKeyBytes(value); return true } catch { return false } }, 'Invalid Solana address')
 
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024
 export const U64_MAX = 18446744073709551615n
@@ -25,6 +28,9 @@ export const proposalSchema = z.object({
   decimals: z.literal(9),
   marketplace: marketplaceSchema,
   assetId: z.string().min(1).max(200),
+  collection: publicKeySchema.optional(),
+  protocol: publicKeySchema.optional(),
+  riskLevel: z.number().int().min(0).max(3).optional(),
   sellerEvidence: z.object({
     source: z.literal('mock-adapter'),
     claimedVerified: z.boolean(),
@@ -45,31 +51,3 @@ export const searchResponseSchema = z.object({
   proposals: z.array(proposalSchema).min(1).max(3),
 }).strict()
 export type SearchResponse = z.infer<typeof searchResponseSchema>
-
-export const mandateInputSchema = z.object({
-  maxAmount: amountSchema,
-  assetType: assetTypeSchema,
-  marketplace: marketplaceSchema,
-  requireVerifiedSeller: z.boolean(),
-  autonomy: z.boolean(),
-}).strict()
-export type MandateInput = z.infer<typeof mandateInputSchema>
-export type Mandate = MandateInput & { version: number; policyHash?: string }
-export const DEFAULT_MANDATE: Mandate = {
-  maxAmount: '200000000', assetType: 'NFT', marketplace: 'DEMO_MARKET',
-  requireVerifiedSeller: true, autonomy: true, version: 1,
-}
-export const RULES = [
-  'Mandate version', 'Proposal expiry', 'Autonomous authorization', 'Maximum value',
-  'Currency / unit', 'Asset type', 'Allowed marketplace', 'Seller evidence claim', 'RWA read-only',
-] as const
-export const REASONS = ['APPROVED', 'STALE_VERSION', 'EXPIRED', 'AUTONOMY_DISABLED',
-  'PRICE_EXCEEDED', 'CURRENCY_MISMATCH', 'ASSET_TYPE_MISMATCH', 'MARKETPLACE_DENIED',
-  'SELLER_EVIDENCE_REQUIRED', 'RWA_READ_ONLY'] as const
-export type ReasonCode = typeof REASONS[number]
-export type RuleCheck = { label: string; passed: boolean }
-export type AuditRecord = {
-  address: string; proposalHash: string; proposalId: string; mandateVersion: number;
-  currentVersion: number; approved: boolean; reasonCode: ReasonCode;
-  checks: number; timestamp: number; signature?: string;
-}

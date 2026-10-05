@@ -1,252 +1,527 @@
 #![allow(unexpected_cfgs)]
+//! GoBuy Na Vault: the on-chain spending mandate that limits what Na may spend.
+//!
+//! The owner signs exactly once to create and fund the mandate. After that the vault, not the
+//! wallet, is the source of funds: Na may trigger eligible spends autonomously, and the program
+//! refuses anything outside the authorized budget, category, destination or expiry.
+//!
+//! The remaining balance of the owner's Phantom wallet is never reachable from this program.
+
 use anchor_lang::prelude::*;
-use solana_sha256_hasher::hashv;
-#[cfg(test)]
-mod hash_tests;
-pub mod rules;
+use anchor_lang::system_program::{transfer, Transfer};
+
+pub mod mandate_rules;
+
+use mandate_rules::{
+    authorize_owner, authorize_spend, authorize_vault, refundable_lamports, validate_create,
+    MandatePolicy, Rejection,
+};
 
 // Undeployed sentinel, NOT a GoBuy deployment ID. Replace via npm run anchor:configure.
-declare_id!("11111111111111111111111111111111");
+declare_id!("CHjdqooB7TUSSJoZoboFP5TtdCspotkVPqoshbr5zE");
+
+/// Seeds for the mandate state account: ["mandate", owner].
+pub const MANDATE_SEED: &[u8] = b"mandate";
+/// Seeds for the vault lamport account: ["vault", mandate].
+pub const VAULT_SEED: &[u8] = b"vault";
+/// Seeds for one spend receipt: ["spend", mandate, spend_id].
+pub const SPEND_SEED: &[u8] = b"spend";
 
 #[program]
 pub mod gobuy_na {
     use super::*;
 
-    pub fn initialize_mandate(ctx: Context<InitializeMandate>, input: MandateInput) -> Result<()> {
-        validate_policy(&input)?;
-        let m = &mut ctx.accounts.mandate;
-        m.owner = ctx.accounts.owner.key();
-        m.version = 1;
-        m.bump = ctx.bumps.mandate;
-        m.apply(input);
-        Ok(())
-    }
-
-    pub fn update_mandate(
-        ctx: Context<UpdateMandate>,
-        input: MandateInput,
-        expected_version: u64,
+    /// Owner-signed setup. Creates the mandate, derives the vault PDA and funds it with the
+    /// authorized budget plus the rent floor that keeps the vault account alive.
+    pub fn create_mandate(
+        ctx: Context<CreateMandate>,
+        max_budget_lamports: u64,
+        expires_at: i64,
+        allowed_category: u8,
+        recipient: Pubkey,
+        executor: Pubkey,
     ) -> Result<()> {
-        validate_policy(&input)?;
-        let m = &mut ctx.accounts.mandate;
-        require_eq!(m.version, expected_version, NaError::ConcurrentUpdate);
-        m.version = m.version.checked_add(1).ok_or(NaError::VersionOverflow)?;
-        m.apply(input);
+        require!(executor != Pubkey::default(), NaError::InvalidOwner);
+        let now = Clock::get()?.unix_timestamp;
+        validate_create(max_budget_lamports, expires_at, allowed_category, now)
+            .map_err(NaError::from)?;
+        require!(recipient != Pubkey::default(), NaError::InvalidOwner);
+        require!(
+            recipient != ctx.accounts.mandate.key() && recipient != ctx.accounts.vault.key(),
+            NaError::InvalidVault
+        );
+        let system_program = ctx.accounts.system_program.to_account_info();
+        let rent_floor = Rent::get()?.minimum_balance(0);
+        let funding = max_budget_lamports
+            .checked_add(rent_floor)
+            .ok_or(NaError::AmountOverflow)?;
+        let mandate = &mut ctx.accounts.mandate;
+        mandate.owner = ctx.accounts.owner.key();
+        mandate.executor = executor;
+        mandate.vault = ctx.accounts.vault.key();
+        mandate.recipient = recipient;
+        mandate.max_budget_lamports = max_budget_lamports;
+        mandate.spent_lamports = 0;
+        mandate.expires_at = expires_at;
+        mandate.allowed_category = allowed_category;
+        mandate.active = true;
+        mandate.closed = false;
+        mandate.created_at = now;
+        mandate.bump = ctx.bumps.mandate;
+        mandate.vault_bump = ctx.bumps.vault;
+        // The single Phantom authorization: move the authorized amount under the vault's control.
+        transfer(
+            CpiContext::new(
+                system_program,
+                Transfer {
+                    from: ctx.accounts.owner.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
+                },
+            ),
+            funding,
+        )?;
+        emit!(MandateCreated {
+            owner: mandate.owner,
+            mandate: mandate.key(),
+            vault: mandate.vault,
+            recipient,
+            max_budget_lamports,
+            expires_at,
+            allowed_category,
+            created_at: now,
+        });
         Ok(())
     }
 
-    pub fn authorize_proposal(
-        ctx: Context<AuthorizeProposal>,
-        input: ProposalInput,
-        mandate_version: u64,
+    /// Agent-signed, rule-bounded spend. The vault PDA signs the transfer, so Na never needs
+    /// the owner's key. Every limit is enforced here before a single lamport moves, and
+    /// `spent_lamports` is only updated after the transfer succeeds.
+    pub fn spend_from_mandate(
+        ctx: Context<SpendFromMandate>,
+        amount_lamports: u64,
+        category: u8,
+        spend_id: [u8; 16],
+        asset_hash: [u8; 32],
     ) -> Result<()> {
-        require!(
-            input.proposal_id != [0; 16] && input.amount > 0 && input.expires_at > 0,
-            NaError::MalformedProposal
-        );
-        require!(
-            (1..=2).contains(&input.asset_type)
-                && (1..=2).contains(&input.marketplace)
-                && (1..=2).contains(&input.currency),
-            NaError::MalformedProposal
-        );
-        // Hash binds all normalized instruction fields; there is no approved argument.
-        require!(
-            proposal_digest(&input) == input.proposal_hash,
-            NaError::HashMismatch
-        );
-        let m = &ctx.accounts.mandate;
-        let timestamp = Clock::get()?.unix_timestamp;
-        let (checks, reason_code) = rules::evaluate(
-            rules::Policy {
-                max_amount: m.max_amount,
-                currency: m.currency,
-                asset_type: m.asset_type,
-                marketplace: m.marketplace,
-                require_verified_seller: m.require_verified_seller,
-                autonomy: m.autonomy,
-            },
-            rules::Facts {
-                amount: input.amount,
-                currency: input.currency,
-                asset_type: input.asset_type,
-                marketplace: input.marketplace,
-                seller_claimed_verified: input.seller_claimed_verified,
-                expires_at: input.expires_at,
-            },
-            mandate_version,
-            m.version,
-            timestamp,
-        );
-        // Rule failures return success so a durable REJECTED record is committed.
-        let record = &mut ctx.accounts.action_record;
-        record.mandate = m.key();
-        record.owner = m.owner;
-        record.proposal_id = input.proposal_id;
-        record.proposal_hash = input.proposal_hash;
-        record.mandate_version = mandate_version;
-        record.current_version = m.version;
-        record.approved = checks == rules::ALL_CHECKS;
-        record.reason_code = reason_code;
-        record.checks = checks;
-        record.timestamp = timestamp;
-        record.bump = ctx.bumps.action_record;
+        require!(spend_id != [0u8; 16], NaError::InvalidSpendId);
+        let now = Clock::get()?.unix_timestamp;
+        let rent_floor = Rent::get()?.minimum_balance(0);
+        let vault_lamports = ctx.accounts.vault.lamports();
+        let mandate_key = ctx.accounts.mandate.key();
+        let owner_key = ctx.accounts.mandate.owner;
+        let recipient_key = ctx.accounts.recipient.key();
+        let vault_bump = ctx.accounts.mandate.vault_bump;
+        let policy = MandatePolicy {
+            active: ctx.accounts.mandate.active,
+            closed: ctx.accounts.mandate.closed,
+            expires_at: ctx.accounts.mandate.expires_at,
+            allowed_category: ctx.accounts.mandate.allowed_category,
+            max_budget_lamports: ctx.accounts.mandate.max_budget_lamports,
+            spent_lamports: ctx.accounts.mandate.spent_lamports,
+        };
+        // Seeds already bind the vault, and the recorded key is checked again as a second layer.
+        authorize_vault(
+            &ctx.accounts.mandate.vault.to_bytes(),
+            &ctx.accounts.vault.key().to_bytes(),
+        ).map_err(NaError::from)?;
+        let spent_after = authorize_spend(
+            &policy,
+            amount_lamports,
+            category,
+            now,
+            vault_lamports,
+            rent_floor,
+        ).map_err(NaError::from)?;
+        let remaining_after = policy
+            .max_budget_lamports
+            .checked_sub(spent_after)
+            .ok_or(NaError::AmountOverflow)?;
+        let vault_seeds: &[&[u8]] = &[VAULT_SEED, mandate_key.as_ref(), &[vault_bump]];
+        transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.system_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.vault.to_account_info(),
+                    to: ctx.accounts.recipient.to_account_info(),
+                },
+                &[vault_seeds],
+            ),
+            amount_lamports,
+        )?;
+        let record = &mut ctx.accounts.spend_record;
+        record.mandate = mandate_key;
+        record.owner = owner_key;
+        record.spend_id = spend_id;
+        record.asset_hash = asset_hash;
+        record.amount_lamports = amount_lamports;
+        record.category = category;
+        record.recipient = recipient_key;
+        record.spent_before = policy.spent_lamports;
+        record.spent_after = spent_after;
+        record.remaining_after = remaining_after;
+        record.timestamp = now;
+        record.bump = ctx.bumps.spend_record;
+        // Only now that the transfer succeeded does the budget move.
+        ctx.accounts.mandate.spent_lamports = spent_after;
+        emit!(MandateSpend {
+            mandate: mandate_key,
+            owner: owner_key,
+            recipient: recipient_key,
+            amount_lamports,
+            spent_before: policy.spent_lamports,
+            spent_after,
+            remaining_after,
+            category,
+            timestamp: now,
+        });
         Ok(())
     }
-}
 
-fn validate_policy(input: &MandateInput) -> Result<()> {
-    require!(
-        input.max_amount > 0
-            && input.currency == 1
-            && (1..=2).contains(&input.asset_type)
-            && (1..=2).contains(&input.marketplace),
-        NaError::InvalidPolicy
-    );
-    let expected = hashv(&[
-        b"gobuy:policy:v1",
-        &input.max_amount.to_le_bytes(),
-        &[
-            input.currency,
-            input.asset_type,
-            input.marketplace,
-            input.require_verified_seller as u8,
-            input.autonomy as u8,
-        ],
-    ])
-    .to_bytes();
-    require!(expected == input.policy_hash, NaError::HashMismatch);
-    Ok(())
-}
+    /// Owner-only revocation. Stops every future spend and returns the unused budget.
+    pub fn cancel_mandate(ctx: Context<CancelMandate>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let rent_floor = Rent::get()?.minimum_balance(0);
+        let mandate_key = ctx.accounts.mandate.key();
+        let owner_key = ctx.accounts.mandate.owner;
+        require!(ctx.accounts.mandate.active, NaError::MandateNotActive);
+        authorize_owner(
+            &ctx.accounts.mandate.owner.to_bytes(),
+            &ctx.accounts.owner.key().to_bytes(),
+        ).map_err(NaError::from)?;
+        authorize_vault(
+            &ctx.accounts.mandate.vault.to_bytes(),
+            &ctx.accounts.vault.key().to_bytes(),
+        ).map_err(NaError::from)?;
+        ctx.accounts.mandate.active = false;
+        ctx.accounts.mandate.closed_at = now;
+        let refund = refundable_lamports(ctx.accounts.vault.lamports(), rent_floor);
+        if refund > 0 {
+            let vault_bump = ctx.accounts.mandate.vault_bump;
+            let vault_seeds: &[&[u8]] = &[VAULT_SEED, mandate_key.as_ref(), &[vault_bump]];
+            transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.system_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.vault.to_account_info(),
+                        to: ctx.accounts.owner.to_account_info(),
+                    },
+                    &[vault_seeds],
+                ),
+                refund,
+            )?;
+        }
+        emit!(MandateCancelled {
+            mandate: mandate_key,
+            owner: owner_key,
+            refunded_lamports: refund,
+            timestamp: now,
+        });
+        Ok(())
+    }
 
-pub fn proposal_digest(input: &ProposalInput) -> [u8; 32] {
-    hashv(&[
-        b"gobuy:proposal:v1",
-        &input.proposal_id,
-        &input.amount.to_le_bytes(),
-        &[
-            input.currency,
-            input.asset_type,
-            input.marketplace,
-            input.seller_claimed_verified as u8,
-        ],
-        &input.asset_id_hash,
-        &input.evidence_hash,
-        &input.metadata_hash,
-        &input.expires_at.to_le_bytes(),
-    ])
-    .to_bytes()
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct MandateInput {
-    pub max_amount: u64,
-    pub currency: u8,
-    pub asset_type: u8,
-    pub marketplace: u8,
-    pub require_verified_seller: bool,
-    pub autonomy: bool,
-    pub policy_hash: [u8; 32],
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct ProposalInput {
-    pub proposal_id: [u8; 16],
-    pub amount: u64,
-    pub currency: u8,
-    pub asset_type: u8,
-    pub marketplace: u8,
-    pub seller_claimed_verified: bool,
-    pub asset_id_hash: [u8; 32],
-    pub evidence_hash: [u8; 32],
-    pub metadata_hash: [u8; 32],
-    pub expires_at: i64,
-    pub proposal_hash: [u8; 32],
+    /// Owner-only reclaim of anything left in the vault once the mandate is inactive or expired.
+    /// Closes the mandate account so a new mandate can be created for the same owner.
+    pub fn withdraw_remaining(ctx: Context<WithdrawRemaining>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let mandate_key = ctx.accounts.mandate.key();
+        let owner_key = ctx.accounts.mandate.owner;
+        let expired = mandate_rules::is_expired(ctx.accounts.mandate.expires_at, now);
+        require!(
+            !ctx.accounts.mandate.active || expired,
+            NaError::MandateStillActive
+        );
+        authorize_owner(
+            &ctx.accounts.mandate.owner.to_bytes(),
+            &ctx.accounts.owner.key().to_bytes(),
+        ).map_err(NaError::from)?;
+        authorize_vault(
+            &ctx.accounts.mandate.vault.to_bytes(),
+            &ctx.accounts.vault.key().to_bytes(),
+        ).map_err(NaError::from)?;
+        let refund = ctx.accounts.vault.lamports();
+        if refund > 0 {
+            let vault_bump = ctx.accounts.mandate.vault_bump;
+            let vault_seeds: &[&[u8]] = &[VAULT_SEED, mandate_key.as_ref(), &[vault_bump]];
+            transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.system_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.vault.to_account_info(),
+                        to: ctx.accounts.owner.to_account_info(),
+                    },
+                    &[vault_seeds],
+                ),
+                refund,
+            )?;
+        }
+        ctx.accounts.mandate.closed = true;
+        ctx.accounts.mandate.active = false;
+        ctx.accounts.mandate.closed_at = now;
+        emit!(MandateClosed {
+            mandate: mandate_key,
+            owner: owner_key,
+            refunded_lamports: refund,
+            timestamp: now,
+        });
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
-pub struct InitializeMandate<'info> {
+pub struct CreateMandate<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
-    #[account(init, payer = owner, space = 8 + Mandate::INIT_SPACE, seeds = [b"mandate", owner.key().as_ref()], bump)]
+    #[account(
+        init,
+        payer = owner,
+        space = 8 + Mandate::INIT_SPACE,
+        seeds = [MANDATE_SEED, owner.key().as_ref()],
+        bump
+    )]
     pub mandate: Account<'info, Mandate>,
+    /// CHECK: program-derived vault PDA. It carries no data and holds only mandate lamports, so
+    /// the funding transfer is what brings it into existence.
+    #[account(mut, seeds = [VAULT_SEED, mandate.key().as_ref()], bump)]
+    pub vault: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct UpdateMandate<'info> {
-    pub owner: Signer<'info>,
-    #[account(mut, has_one = owner, seeds = [b"mandate", owner.key().as_ref()], bump = mandate.bump)]
+#[instruction(amount_lamports: u64, category: u8, spend_id: [u8; 16], asset_hash: [u8; 32])]
+pub struct SpendFromMandate<'info> {
+    /// Executor authorized by the owner; also pays receipt rent and fees.
+    #[account(mut, address = mandate.executor @ NaError::InvalidOwner)]
+    pub payer: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [MANDATE_SEED, mandate.owner.as_ref()],
+        bump = mandate.bump
+    )]
     pub mandate: Account<'info, Mandate>,
-}
-
-#[derive(Accounts)]
-#[instruction(input: ProposalInput)]
-pub struct AuthorizeProposal<'info> {
-    #[account(mut)]
-    pub owner: Signer<'info>,
-    #[account(has_one = owner, seeds = [b"mandate", owner.key().as_ref()], bump = mandate.bump)]
-    pub mandate: Account<'info, Mandate>,
-    // ID-based PDA blocks a replay even if the hash or mandate version is changed.
-    // init (never init_if_needed): existing IDs cannot overwrite audit records.
-    #[account(init, payer = owner, space = 8 + ActionRecord::INIT_SPACE,
-        seeds = [b"action", mandate.key().as_ref(), input.proposal_id.as_ref()], bump)]
-    pub action_record: Account<'info, ActionRecord>,
+    /// CHECK: vault PDA recorded in the mandate; re-checked in the handler.
+    #[account(mut, seeds = [VAULT_SEED, mandate.key().as_ref()], bump = mandate.vault_bump)]
+    pub vault: UncheckedAccount<'info>,
+    /// CHECK: the single destination the owner authorized at mandate creation.
+    #[account(mut, address = mandate.recipient)]
+    pub recipient: UncheckedAccount<'info>,
+    // init (never init_if_needed): one spend_id can only ever produce one receipt.
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + SpendRecord::INIT_SPACE,
+        seeds = [SPEND_SEED, mandate.key().as_ref(), spend_id.as_ref()],
+        bump
+    )]
+    pub spend_record: Account<'info, SpendRecord>,
     pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+pub struct CancelMandate<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(
+        mut,
+        has_one = owner,
+        seeds = [MANDATE_SEED, owner.key().as_ref()],
+        bump = mandate.bump
+    )]
+    pub mandate: Account<'info, Mandate>,
+    /// CHECK: vault PDA recorded in the mandate; re-checked in the handler.
+    #[account(mut, seeds = [VAULT_SEED, mandate.key().as_ref()], bump = mandate.vault_bump)]
+    pub vault: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawRemaining<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(
+        mut,
+        close = owner,
+        has_one = owner,
+        seeds = [MANDATE_SEED, owner.key().as_ref()],
+        bump = mandate.bump
+    )]
+    pub mandate: Account<'info, Mandate>,
+    /// CHECK: vault PDA recorded in the mandate; re-checked in the handler.
+    #[account(mut, seeds = [VAULT_SEED, mandate.key().as_ref()], bump = mandate.vault_bump)]
+    pub vault: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+/// On-chain mandate state. Deliberately small: the category is a `u8` and no free-form string is
+/// ever stored, so the account stays cheap and cannot be used to smuggle data.
 #[account]
 #[derive(InitSpace)]
 pub struct Mandate {
     pub owner: Pubkey,
-    pub version: u64,
-    pub max_amount: u64,
-    pub currency: u8,
-    pub asset_type: u8,
-    pub marketplace: u8,
-    pub require_verified_seller: bool,
-    pub autonomy: bool,
-    pub policy_hash: [u8; 32],
+    pub vault: Pubkey,
+    pub recipient: Pubkey,
+    pub max_budget_lamports: u64,
+    pub spent_lamports: u64,
+    pub expires_at: i64,
+    pub allowed_category: u8,
+    pub active: bool,
+    pub closed: bool,
+    pub created_at: i64,
+    pub closed_at: i64,
     pub bump: u8,
+    pub vault_bump: u8,
+    pub executor: Pubkey,
 }
+
 impl Mandate {
-    fn apply(&mut self, input: MandateInput) {
-        self.max_amount = input.max_amount;
-        self.currency = input.currency;
-        self.asset_type = input.asset_type;
-        self.marketplace = input.marketplace;
-        self.require_verified_seller = input.require_verified_seller;
-        self.autonomy = input.autonomy;
-        self.policy_hash = input.policy_hash;
+    /// Remaining authorized budget. Used by clients; the program recomputes it on every spend.
+    pub fn remaining_lamports(&self) -> u64 {
+        self.max_budget_lamports.saturating_sub(self.spent_lamports)
     }
 }
 
+/// One immutable receipt per authorized spend: the transaction history for the dashboard.
 #[account]
 #[derive(InitSpace)]
-pub struct ActionRecord {
+pub struct SpendRecord {
     pub mandate: Pubkey,
     pub owner: Pubkey,
-    pub proposal_id: [u8; 16],
-    pub proposal_hash: [u8; 32],
-    pub mandate_version: u64,
-    pub current_version: u64,
-    pub approved: bool,
-    pub reason_code: u8,
-    pub checks: u16,
+    pub recipient: Pubkey,
+    pub spend_id: [u8; 16],
+    pub asset_hash: [u8; 32],
+    pub amount_lamports: u64,
+    pub spent_before: u64,
+    pub spent_after: u64,
+    pub remaining_after: u64,
+    pub category: u8,
     pub timestamp: i64,
     pub bump: u8,
 }
 
+#[event]
+pub struct MandateCreated {
+    pub owner: Pubkey,
+    pub mandate: Pubkey,
+    pub vault: Pubkey,
+    pub recipient: Pubkey,
+    pub max_budget_lamports: u64,
+    pub expires_at: i64,
+    pub allowed_category: u8,
+    pub created_at: i64,
+}
+
+#[event]
+pub struct MandateSpend {
+    pub mandate: Pubkey,
+    pub owner: Pubkey,
+    pub recipient: Pubkey,
+    pub amount_lamports: u64,
+    pub spent_before: u64,
+    pub spent_after: u64,
+    pub remaining_after: u64,
+    pub category: u8,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct MandateCancelled {
+    pub mandate: Pubkey,
+    pub owner: Pubkey,
+    pub refunded_lamports: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct MandateClosed {
+    pub mandate: Pubkey,
+    pub owner: Pubkey,
+    pub refunded_lamports: u64,
+    pub timestamp: i64,
+}
+
 #[error_code]
 pub enum NaError {
-    #[msg("Malformed proposal fields")]
-    MalformedProposal,
-    #[msg("Hash does not match canonical fields")]
-    HashMismatch,
-    #[msg("Invalid mandate constraints")]
-    InvalidPolicy,
-    #[msg("Mandate version overflow")]
-    VersionOverflow,
-    #[msg("Mandate changed; refresh before updating")]
-    ConcurrentUpdate,
+    #[msg("The mandate is not active")]
+    MandateNotActive,
+    #[msg("The mandate has expired")]
+    MandateExpired,
+    #[msg("The purchase exceeds the remaining authorized budget")]
+    BudgetExceeded,
+    #[msg("The vault does not hold enough lamports for this spend")]
+    InsufficientVaultBalance,
+    #[msg("Only the mandate owner can do this")]
+    InvalidOwner,
+    #[msg("The supplied vault does not belong to this mandate")]
+    InvalidVault,
+    #[msg("This mandate does not allow that category")]
+    InvalidCategory,
+    #[msg("The amount is not valid")]
+    InvalidAmount,
+    #[msg("Lamport arithmetic overflowed")]
+    AmountOverflow,
+    #[msg("The spend id is missing")]
+    InvalidSpendId,
+    #[msg("Reclaim the remaining funds before creating a new mandate")]
+    MandateStillActive,
+    #[msg("Unexpected transaction failure")]
+    TransactionFailed,
+}
+
+impl From<Rejection> for NaError {
+    fn from(rejection: Rejection) -> Self {
+        match rejection {
+            Rejection::MandateNotActive => NaError::MandateNotActive,
+            Rejection::MandateExpired => NaError::MandateExpired,
+            Rejection::BudgetExceeded => NaError::BudgetExceeded,
+            Rejection::InsufficientVaultBalance => NaError::InsufficientVaultBalance,
+            Rejection::InvalidOwner => NaError::InvalidOwner,
+            Rejection::InvalidVault => NaError::InvalidVault,
+            Rejection::InvalidCategory => NaError::InvalidCategory,
+            Rejection::InvalidAmount => NaError::InvalidAmount,
+            Rejection::AmountOverflow => NaError::AmountOverflow,
+        }
+    }
+}
+
+#[cfg(test)]
+mod mandate_account_tests {
+    use super::*;
+
+    #[test]
+    fn remaining_lamports_never_underflows() {
+        let mandate = Mandate {
+            owner: Pubkey::default(),
+            vault: Pubkey::default(),
+            recipient: Pubkey::default(),
+            max_budget_lamports: 1_000_000_000,
+            spent_lamports: 400_000_000,
+            expires_at: 0,
+            allowed_category: mandate_rules::CATEGORY_NFT,
+            active: true,
+            closed: false,
+            created_at: 0,
+            closed_at: 0,
+            bump: 255,
+            vault_bump: 254,
+            executor: Pubkey::default(),
+        };
+        assert_eq!(mandate.remaining_lamports(), 600_000_000);
+        let corrupt = Mandate {
+            spent_lamports: 2_000_000_000,
+            ..mandate
+        };
+        assert_eq!(corrupt.remaining_lamports(), 0);
+    }
+
+    #[test]
+    fn rejection_maps_onto_the_program_error_codes() {
+        assert!(matches!(
+            NaError::from(Rejection::BudgetExceeded),
+            NaError::BudgetExceeded
+        ));
+        assert!(matches!(
+            NaError::from(Rejection::InvalidVault),
+            NaError::InvalidVault
+        ));
+        assert_eq!(Rejection::MandateNotActive.code(), 1);
+    }
 }

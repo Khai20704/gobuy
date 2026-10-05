@@ -1,5 +1,9 @@
 # GoBuy: flow và bản đồ file
 
+Product research now extends this original authority MVP. Read [Na research](NA_RESEARCH.md)
+for the new provider pipeline, Commerce Twin storage, recommendation cards, API endpoints and full file inventory.
+The flow described below remains available as **Search mode → Authority demo**. Research uses its own typed CandidateItem contract and hands selections to authority review without changing the existing on-chain wire format.
+
 ## Mục tiêu của bản MVP
 
 Bạn đặt giới hạn trước. Agent tìm và đưa ra đề xuất. Na kiểm tra đề xuất có nằm trong giới hạn đó không.
@@ -124,3 +128,5 @@ Hash giúp phát hiện dữ liệu bị thay đổi; không biến giá/seller 
 Tests có thể bỏ về mặt chạy app, nhưng sẽ mất khả năng phát hiện lỗi quyền owner, hash, replay hoặc UI.
 Nếu bỏ Playwright phải bỏ cả frontend/e2e, playwright.config.ts, dependency @playwright/test, script test:e2e và mục liên quan trong tsconfig.tests.json.
 Mặc định vẫn giữ tests, đã dọn các README giữ chỗ một dòng và import trung gian dư để cây source dễ đọc hơn.
+
+Current refactor and extension setup: [Architecture v2](NA_ARCHITECTURE_V2.md).

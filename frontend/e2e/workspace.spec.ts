@@ -5,6 +5,7 @@ test('API-backed demo, mandate editing, routes and audit labels', async ({ page 
   await page.goto('/')
   await expect(page).toHaveURL(/\/na$/)
   await expect(page.getByText('● DEMO MODE', { exact: true })).toBeVisible()
+  await page.getByLabel('Search mode', { exact: true }).selectOption('demo')
   await page.getByLabel('Your request to Na').fill('Find a quiet artwork')
   await page.getByRole('button', { name: 'Send request', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Quiet forms / Study 08' })).toBeVisible()
@@ -18,18 +19,20 @@ test('API-backed demo, mandate editing, routes and audit labels', async ({ page 
   await expect(page.getByText('DEMO PREVIEW · RULES_MATCH')).toBeVisible()
   await expect(page.locator('a[href*="explorer.solana.com/tx/"]')).toHaveCount(0)
   await page.getByRole('link', { name: /My mandate/ }).click()
-  await page.getByLabel('Maximum value (integer lamports)').fill('1')
+  await page.getByLabel('Active mandate').uncheck()
+  await expect(page.getByLabel('Maximum value (integer lamports)')).toHaveCount(0)
   await page.getByRole('button', { name: /Save demo boundaries/ }).click()
   await expect(page.getByText('v2', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: /Talk to Na/ }).click()
   await page.getByRole('button', { name: /Record demo rule preview/ }).click()
-  await expect(page.getByText('DEMO PREVIEW · PRICE_EXCEEDED')).toBeVisible()
+  await expect(page.getByText('DEMO PREVIEW · MANDATE_INACTIVE')).toBeVisible()
   expect(errors).toEqual([])
 })
 test('image upload, RWA read-only, API failure and mobile wallet access', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/na')
   await expect(page.getByRole('button', { name: 'Connect Phantom' })).toBeVisible()
+  await page.getByLabel('Search mode', { exact: true }).selectOption('demo')
   await page.locator('input[type=file]').setInputFiles({
     name: 'reference.png', mimeType: 'image/png',
     buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII=', 'base64'),

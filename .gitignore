@@ -11,3 +11,29 @@ frontend/public/idl/
 
 playwright-report/
 test-results/
+.data/
+
+backend/.env
+firebase-debug.log*
+ui-debug.log*
+
+.tmp*
+*.key
+*.pem
+
+# Local logs and test/build caches
+*.log
+*.log.*
+coverage/
+.nyc_output/
+.cache/
+blob-report/
+playwright/.auth/
+
+# Local Solana validator state and credentials
+.anchor/
+test-ledger/
+keypair.json
+service-account*.json
+serviceAccount*.json
+*-firebase-adminsdk-*.json

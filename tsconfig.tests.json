@@ -17,6 +17,8 @@
     "frontend/tests",
     "frontend/e2e",
     "anchor/tests",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "extension/tests",
+    "extension/src/chrome.d.ts"
   ]
 }

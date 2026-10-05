@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3, "name": "Na — GoBuy Commerce Agent", "version": "0.1.0", "minimum_chrome_version": "116",
+  "description": "Research products with Na. Review evidence and use Phantom through GoBuy for on-chain authorization.",
+  "permissions": ["activeTab", "storage", "sidePanel", "scripting"],
+  "host_permissions": ["http://localhost:3001/*"],
+  "action": { "default_title": "Talk to Na", "default_popup": "popup.html" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "background": { "service_worker": "background/service-worker.js", "type": "module" },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; connect-src http://localhost:3001" }
+}
