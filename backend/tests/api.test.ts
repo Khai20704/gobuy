@@ -4,6 +4,7 @@ import type { Server } from 'node:http'
 import { createApp } from '../src/app.ts'
 import { DiscoveryService } from '../src/application/DiscoveryService.ts'
 import { MockLLMProvider } from '../src/adapters/llm/LLMProvider.ts'
+import { env } from '../src/config/env.ts'
 let server: Server
 let url: string
 before(async () => {
@@ -18,6 +19,34 @@ const post = (body: unknown) => fetch(url + '/api/proposals/search', { method: '
 test('health declares demo mode and devnet', async () => {
   const response = await fetch(url + '/api/health')
   assert.deepEqual(await response.json(), { status: 'ok', mode: 'demo', cluster: 'devnet' })
+})
+test('cross-origin reads are granted only to an exact origin listed in APP_ORIGINS', async () => {
+  const allowed = env.APP_ORIGINS[0]
+  const allowedResponse = await fetch(url + '/api/health', { headers: { Origin: allowed } })
+  assert.equal(allowedResponse.headers.get('access-control-allow-origin'), allowed)
+  assert.match(allowedResponse.headers.get('vary') ?? '', /origin/i)
+  assert.equal(allowedResponse.headers.get('access-control-allow-methods'), 'GET,POST,PUT,PATCH,DELETE,OPTIONS')
+  assert.equal(allowedResponse.headers.get('access-control-allow-headers'), 'Content-Type,Authorization')
+  const accountResponse = await fetch(url + '/api/account/me', { headers: { Origin: allowed } })
+  assert.equal(accountResponse.status, 401)
+  assert.equal(accountResponse.headers.get('access-control-allow-origin'), allowed)
+  const deniedResponse = await fetch(url + '/api/health', { headers: { Origin: 'https://attacker.example' } })
+  assert.equal(deniedResponse.headers.get('access-control-allow-origin'), null)
+  const anonymousResponse = await fetch(url + '/api/health')
+  assert.equal(anonymousResponse.status, 200)
+  assert.equal(anonymousResponse.headers.get('access-control-allow-origin'), null)
+})
+test('preflight answers 204 and never widens access for unknown origins', async () => {
+  const allowed = env.APP_ORIGINS[0]
+  const preflight = await fetch(url + '/api/account/me', {
+    method: 'OPTIONS',
+    headers: { Origin: allowed, 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' },
+  })
+  assert.equal(preflight.status, 204)
+  assert.equal(preflight.headers.get('access-control-allow-origin'), allowed)
+  const denied = await fetch(url + '/api/account/me', { method: 'OPTIONS', headers: { Origin: 'https://attacker.example' } })
+  assert.equal(denied.status, 204)
+  assert.equal(denied.headers.get('access-control-allow-origin'), null)
 })
 test('search returns unique expiring proposals, never authorization', async () => {
   const first = await (await post({ text: 'Find art' })).json()

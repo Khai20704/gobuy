@@ -26,6 +26,21 @@ export function createApp(service = new DiscoveryService(new MockLLMProvider(), 
     response.setHeader('X-Content-Type-Options', 'nosniff')
     next()
   })
+  // Cross-origin access is granted only to the exact origins listed in APP_ORIGINS. Never '*':
+  // these responses carry Authorization-authenticated data and must not be readable elsewhere.
+  // Requests without an Origin header (curl, server-to-server, same-origin) are untouched, and
+  // the per-route origin checks still run afterwards.
+  app.use((request, response, next) => {
+    const origin = request.get('origin')
+    if (origin && env.APP_ORIGINS.includes(origin)) {
+      response.setHeader('Access-Control-Allow-Origin', origin)
+      response.vary('Origin')
+      response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS')
+      response.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    }
+    if (request.method === 'OPTIONS') { response.sendStatus(204); return }
+    next()
+  })
   app.use(express.json({ limit: '3mb', strict: true }))
   app.get('/api/health', (_request, response) => response.json({ status: 'ok', mode: 'demo', cluster: 'devnet' }))
   app.use('/api/account', accounts.router)
