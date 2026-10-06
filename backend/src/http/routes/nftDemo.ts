@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from 'express'
 import { z } from 'zod'
 import { InputError } from '../../schemas/search.js'
+import { originGuard } from '../originGuard.js'
 import { NftDemoService } from '../../services/nftDemo/NftDemoService.js'
 import { artSvg, demoArt } from '../../services/nftDemo/catalog.js'
 import { createNaRequestStore, type NaRequestStatus, type NaRequestStore } from '../../persistence/NaRequestStore.js'
@@ -21,13 +22,9 @@ export function nftDemoRoutes(service = new NftDemoService(), origins: string[] 
       image: `${base}/api/nft-demo/art/${art.id}`, attributes: [{ trait_type: 'Network', value: 'Devnet' }],
       properties: { category: 'image', files: [{ uri: `${base}/api/nft-demo/art/${art.id}`, type: 'image/svg+xml' }] } })
   })
-  router.use((req, res, next) => {
-    const origin = req.get('origin')
-    if (req.get('sec-fetch-site') === 'cross-site' || origin && !origins.includes(origin) && origin !== `${req.protocol}://${req.get('host')}`) {
-      res.status(403).json({ error: { message: 'Open Na from the configured app origin.' } }); return
-    }
-    next()
-  })
+  // A cross-site request is normal here: the deployed frontend lives on a different domain, so
+  // Origin decides, never Sec-Fetch-Site.
+  router.use(originGuard(origins, response => response.status(403).json({ error: { message: 'Open Na from the configured app origin.' } })))
   router.use(requireAccount)
   router.get('/requests', async (_req, res) => {
     res.json(await requests.list(res.locals.identity.uid))

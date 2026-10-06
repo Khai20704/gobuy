@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { PublicKey } from '@solana/web3.js'
 import { createMandateInputSchema, explainMandateRejection, mandateCategoryAllows, mandateOwnerActionSchema, mandateSpendRequestSchema, walletAddressSchema, MANDATE_DURATION_PRESETS } from '@gobuy/shared'
 import { InputError } from '../../schemas/search.js'
+import { originGuard } from '../originGuard.js'
 import { requiredMandateClient, settlementAddress } from '../../services/mandate/MandateProgramClient.js'
 import { describeMandate, mandateProgramId, serializeMandate } from '../../services/mandate/MandateGuard.js'
 import { agentKeypair } from '../../services/mandate/agentKeypair.js'
@@ -19,11 +20,9 @@ export function mandateRoutes(authenticate: RequestHandler, origins: string[]) {
     if (!result.success) throw new InputError('Yêu cầu Na Vault không hợp lệ.')
     return result.data
   }
-  router.use((req, res, next) => {
-    const origin = req.get('origin')
-    if (req.get('sec-fetch-site') === 'cross-site' || origin && !origins.includes(origin) && origin !== `${req.protocol}://${req.get('host')}`) { res.sendStatus(403); return }
-    next()
-  }, authenticate)
+  // A cross-site request is normal here: the deployed frontend lives on a different domain, so
+  // Origin decides, never Sec-Fetch-Site.
+  router.use(originGuard(origins, response => response.sendStatus(403)), authenticate)
   router.get('/config', (_req, res) => res.json({
     vaultProgramId: mandateProgramId()?.toBase58() ?? null,
     autonomousExecutionReady: !!mandateProgramId() && !!agentKeypair() && !!settlementAddress(),

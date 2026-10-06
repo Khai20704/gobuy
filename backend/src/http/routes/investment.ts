@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from 'express'
 import { z } from 'zod'
 import { investmentPreferencesSchema, namedNFTQuery, remainingBudget, walletAddressSchema } from '@gobuy/shared'
 import { InputError } from '../../schemas/search.js'
+import { originGuard } from '../originGuard.js'
 import { extractNamedCollectionQuery } from '../../services/acquisition/intentLanguage.js'
 import { AssetResolver } from '../../services/rwa/AssetResolver.js'
 import { RWARegistry } from '../../services/rwa/RWARegistry.js'
@@ -46,11 +47,9 @@ export function investmentRoutes(authenticate: RequestHandler, origins: string[]
     const parsed = walletAddressSchema.optional().safeParse(value)
     return parsed.success ? parsed.data ?? '' : ''
   }
-  router.use((req, res, next) => {
-    const origin = req.get('origin')
-    if (req.get('sec-fetch-site') === 'cross-site' || origin && !origins.includes(origin) && origin !== `${req.protocol}://${req.get('host')}`) { res.sendStatus(403); return }
-    next()
-  }, authenticate)
+  // A cross-site request is normal here: the deployed frontend lives on a different domain, so
+  // Origin decides, never Sec-Fetch-Site.
+  router.use(originGuard(origins, response => response.sendStatus(403)), authenticate)
   router.get('/config', (_req, res) => res.json({ rwaNetwork: 'mainnet', executionEnabled: false }))
   // Single source of truth for NFT vs RWA vs UNKNOWN. No frontend keyword list decides this.
   router.post('/asset/resolve', async (req, res) => {

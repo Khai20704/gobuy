@@ -4,19 +4,16 @@ import { Router } from 'express'
 import { researchRequestSchema, decisionInputSchema, decisionResponseSchema, twinPreferencesSchema } from '@gobuy/shared'
 import type { NaResearchService } from '../../application/NaResearchService.js'
 import { InputError } from '../../schemas/search.js'
+import { isAllowedOrigin } from '../originGuard.js'
 
 export function researchRoutes(service: NaResearchService, allowedOrigins: string[] = [], sessions?: ExtensionSessions) {
   const router = Router()
   router.use((request, response, next) => {
     if (response.locals.extensionAuthenticated) { next(); return }
     // Same-origin, cookie-isolated anonymous workspace. No wallet address is treated as authentication.
-    const origin = request.get('origin')
-    let originAllowed = !origin
-    if (origin) {
-      try { originAllowed = allowedOrigins.includes(origin) || new URL(origin).origin === `${request.protocol}://${request.get('host')}` }
-      catch { originAllowed = false }
-    }
-    if (request.get('sec-fetch-site') === 'cross-site' || !originAllowed) {
+    // A cross-site request is normal: the deployed frontend lives on a different domain, so Origin
+    // decides, never Sec-Fetch-Site.
+    if (!isAllowedOrigin(request, allowedOrigins)) {
       response.status(403).json({ error: { code: 'ORIGIN_DENIED', message: 'Use the GoBuy app on this origin.' } }); return
     }
     const cookie = request.headers.cookie?.split(';').map(part => part.trim()).find(part => part.startsWith('gobuy_twin='))?.slice(11)

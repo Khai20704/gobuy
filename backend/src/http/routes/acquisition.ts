@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from 'express'
 import { z } from 'zod'
 import { walletAddressSchema } from '@gobuy/shared'
 import { InputError } from '../../schemas/search.js'
+import { originGuard } from '../originGuard.js'
 import { AcquisitionService } from '../../services/acquisition/AcquisitionService.js'
 import { DiscoveryEngine, NFTIntentParser, acquisitionConfig } from '../../services/acquisition/discovery.js'
 import { nftProviders } from '../../services/acquisition/providers.js'
@@ -33,13 +34,9 @@ export function acquisitionRoutes(authenticate: RequestHandler, requireReady: Re
     if (!metadata) { res.sendStatus(404); return }
     res.json(metadata)
   })
-  router.use((req, res, next) => {
-    const origin = req.get('origin')
-    if (req.get('sec-fetch-site') === 'cross-site' || origin && !origins.includes(origin) && origin !== `${req.protocol}://${req.get('host')}`) {
-      res.status(403).json({ error: { message: 'Mở GoBuy từ địa chỉ ứng dụng đã cấu hình.' } }); return
-    }
-    next()
-  })
+  // A cross-site request is normal here: the deployed frontend lives on a different domain, so
+  // Origin decides, never Sec-Fetch-Site.
+  router.use(originGuard(origins, response => response.status(403).json({ error: { message: 'Mở GoBuy từ địa chỉ ứng dụng đã cấu hình.' } })))
   router.use(authenticate)
   router.get('/config', (_req, res) => {
     const programId = mandateProgramId()
