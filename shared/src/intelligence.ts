@@ -133,6 +133,7 @@ export const rwaRecommendationSchema = z.object({
   // Jupiter market data only. Never used to decide identity or authenticity.
   priceUsd: z.number().finite().nonnegative().nullable(),
   withinBudget: z.boolean().nullable(),
+  estimatedQuantity: z.string().optional(),
   score: z.number().finite().min(0).max(100),
   reasons: z.array(z.string()).default([]),
 }).strict()

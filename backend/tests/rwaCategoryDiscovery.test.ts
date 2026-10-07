@@ -64,10 +64,10 @@ test('category classification never calls canonical resolution or NFT discovery'
   assert.equal(lookups, 0)
 })
 
-test('budget ranking filters expensive assets and does not claim an unknown price exceeds budget', () => {
+test('budget ranking keeps expensive assets without inventing budget fit from unit price', () => {
   const ranked = rankApprovedCandidates([{ asset: nvdax, priceUsd: 150 }, { asset: tsalx, priceUsd: null }],
     { amount: 100, currency: 'USDC' })
-  assert.equal(ranked.length, 1)
+  assert.equal(ranked.length, 2)
   assert.equal(ranked[0].withinBudget, null)
   assert.equal(ranked[0].reasons.some(reason => /above/.test(reason)), false)
 })
@@ -95,12 +95,44 @@ function quotesByMint(prices: Record<string, number>): JupiterQuoteService {
   return new JupiterQuoteService(client)
 }
 
-function serviceFor(assets: RWAAsset[]) {
+function serviceFor(assets: RWAAsset[], quotes = quotesByMint({ [NVDAX_MINT]: 20, [TSLAX_MINT]: 30, [GOLDX_MINT]: 5 })) {
   const registry = registryWith(assets)
-  const quotes = quotesByMint({ [NVDAX_MINT]: 20, [TSLAX_MINT]: 30, [GOLDX_MINT]: 5 })
   return new RWAService(registry, { quotes, cached: new MemoryStore<SavedRWA>(),
     resolver: new AssetResolver(registry, nftEvidence) })
 }
+
+test('100 USDC quotes a fractional token even when unit price exceeds the budget', async () => {
+  const quotes = quotesByMint({ [NVDAX_MINT]: 150 })
+  const original = quotes.quote.bind(quotes)
+  const amounts: string[] = []
+  quotes.quote = async (...args) => { amounts.push(args[2]); return original(...args) }
+  const reply = await serviceFor([nvdax], quotes).discover('user', 'Tìm RWA công nghệ khoảng 100 USDC')
+  assert.equal(reply.status, 'RECOMMENDED')
+  assert.deepEqual(amounts, ['1000000', '100000000'])
+  assert.equal(reply.recommendations?.[0].withinBudget, true)
+  assert.equal(reply.recommendations?.[0].estimatedQuantity, '0.666667')
+  assert.match(reply.message, /100 USDC ≈ 0.666667 NVDAx/)
+  assert.equal(reply.transaction, undefined)
+  assert.equal(reply.intent?.action, 'SEARCH')
+})
+
+test('invalid budget routes stay unconfirmed and unapproved assets are never quoted', async () => {
+  for (const failure of ['error', 'zero', 'no-route']) {
+    const client = { request: async (_path: string, params: Record<string, string>) => {
+      assert.equal(params.outputMint, NVDAX_MINT)
+      if (failure === 'error') throw new Error('unavailable')
+      return { inputMint: params.inputMint, outputMint: params.outputMint, inAmount: params.amount,
+        outAmount: failure === 'zero' ? '0' : '100', otherAmountThreshold: '0',
+        slippageBps: 100, swapMode: 'ExactIn', routePlan: [] }
+    } } as unknown as JupiterClient
+    const reply = await serviceFor([nvdax, { ...tsalx, verified: false }], new JupiterQuoteService(client))
+      .discover('user', 'Tìm RWA công nghệ khoảng 100 USDC')
+    assert.equal(reply.recommendations?.length, 1)
+    assert.equal(reply.recommendations?.[0].withinBudget, null)
+    assert.equal(reply.recommendations?.[0].estimatedQuantity, undefined)
+    assert.match(reply.message, /chưa có quote hợp lệ/)
+  }
+})
 
 test('"Tìm cho tôi một RWA công nghệ đáng mua trong khoảng 100 USDC" parses as a category discovery', () => {
   const intent = parseRWAIntent('Tìm cho tôi một RWA công nghệ đáng mua trong khoảng 100 USDC', [nvdax, tsalx, goldx])

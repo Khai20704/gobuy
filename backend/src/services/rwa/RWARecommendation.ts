@@ -41,7 +41,7 @@ export function filterApprovedByCategory(assets: RWAAsset[], category?: string):
   return approved.filter(asset => matchesCategory(asset, hint))
 }
 
-export interface PricedCandidate { asset: RWAAsset; priceUsd: number | null }
+export interface PricedCandidate { asset: RWAAsset; priceUsd: number | null; estimatedQuantity?: string }
 
 /** A cheaper already-approved candidate ranks higher on this factor; it is never authenticity. */
 function priceScore(priceUsd: number | null): number {
@@ -49,31 +49,27 @@ function priceScore(priceUsd: number | null): number {
   return Math.max(0, 40 * (1 - Math.min(1, priceUsd / 1000)))
 }
 
-function toRecommendation(candidate: PricedCandidate, budgetUsd: number | undefined): RWARecommendation {
+function toRecommendation(candidate: PricedCandidate, budget?: { amount: number; currency: 'SOL' | 'USDC' }): RWARecommendation {
   const { asset, priceUsd } = candidate
-  const withinBudget = budgetUsd === undefined || priceUsd === null ? null : priceUsd <= budgetUsd
+  const withinBudget = budget && candidate.estimatedQuantity ? true : null
   const reasons = ['Identity comes from RWA_APPROVED_LIST (approved canonical mint), never from liquidity, volume or popularity.']
   reasons.push(priceUsd === null
     ? 'Indicative market price is unavailable, so budget fit is unconfirmed.'
     : `Indicative market price ≈ ${priceUsd} USD per ${asset.symbol} (market data only).`)
-  if (budgetUsd !== undefined && withinBudget !== null) reasons.push(withinBudget
-    ? `Fits the ≈${budgetUsd} USDC budget.` : `Price is above the ≈${budgetUsd} USDC budget.`)
+  if (budget) reasons.push(withinBudget
+    ? `${budget.amount} ${budget.currency} quotes approximately ${candidate.estimatedQuantity} ${asset.symbol}; network fees are separate.`
+    : 'Budget quote unavailable; purchase amount is unconfirmed.')
   const score = Math.round(Math.min(100, (withinBudget === true ? 60 : withinBudget === null ? 30 : 0) + priceScore(priceUsd)) * 100) / 100
   return rwaRecommendationSchema.parse({ symbol: asset.symbol, mint: asset.mint, name: asset.name,
-    category: asset.category, priceUsd, withinBudget, score, reasons })
+    category: asset.category, priceUsd, withinBudget, estimatedQuantity: candidate.estimatedQuantity, score, reasons })
 }
 
 /**
- * Filters candidates by an applicable budget, then ranks the survivors.
- *
- * A budget only filters when its currency is USDC, because that is the only currency the USDC-quoted
- * price can be compared against without inventing a conversion rate. A candidate whose price is
- * unknown is kept, flagged as budget-unconfirmed. Equal scores fall back to a stable symbol order.
+ * Rank approved candidates by quote availability and existing price factors. A spend budget can
+ * buy fractional tokens; unit price is never a budget ceiling. Missing quotes remain unconfirmed.
  */
 export function rankApprovedCandidates(candidates: PricedCandidate[], budget?: { amount: number; currency: 'SOL' | 'USDC' }): RWARecommendation[] {
-  const budgetUsd = budget && budget.currency === 'USDC' && budget.amount > 0 ? budget.amount : undefined
   return candidates
-    .filter(candidate => budgetUsd === undefined || candidate.priceUsd === null || candidate.priceUsd <= budgetUsd)
-    .map(candidate => toRecommendation(candidate, budgetUsd))
+    .map(candidate => toRecommendation(candidate, budget))
     .sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol))
 }

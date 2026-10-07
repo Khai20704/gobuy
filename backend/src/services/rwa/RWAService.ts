@@ -79,16 +79,26 @@ export class RWAService {
     const candidates = filterApprovedByCategory(this.registry.list(), category)
     if (candidates.length === 0) throw new InputError(`No approved ${label}RWA candidates are currently available.`)
     const priced: PricedCandidate[] = []
-    for (const asset of candidates) priced.push({ asset, priceUsd: await this.observedPriceUsd(asset) })
-    const recommendations = rankApprovedCandidates(priced, budget)
-    if (recommendations.length === 0) {
-      throw new InputError(`No approved ${label}RWA candidates fit the ≈${budget?.amount ?? ''} ${budget?.currency ?? ''} budget.`)
+    for (const asset of candidates) {
+      const candidate: PricedCandidate = { asset, priceUsd: await this.observedPriceUsd(asset) }
+      if (budget) {
+        try {
+          const amount = String(Math.round(budget.amount * 10 ** (budget.currency === 'SOL' ? SOL_DECIMALS : USDC_DECIMALS)))
+          const quote = await this.quotes.quote(budget.currency === 'SOL' ? SOL_MINT : USDC_MINT, asset.mint, amount)
+          if (BigInt(quote.outAmount) > 0n) candidate.estimatedQuantity = formatAtomic(quote.outAmount, asset.decimals)
+        } catch { /* Quote failure does not revoke an approved identity; budget fit stays unknown. */ }
+      }
+      priced.push(candidate)
     }
+    const recommendations = rankApprovedCandidates(priced, budget)
     let intent: RWAIntent | undefined
     try { intent = parseRWAIntent(text, this.registry.list()) } catch { intent = undefined }
     const network = await this.registry.network()
     const listed = recommendations.slice(0, 5).map(item =>
-      `${item.symbol} (${item.category}${item.priceUsd === null ? '' : ` ≈ ${item.priceUsd} USD`})`).join(', ')
+      `${item.symbol} (${item.category}${item.priceUsd === null ? '' : ` ≈ ${item.priceUsd} USD/token`})` +
+      (budget ? item.estimatedQuantity
+        ? `: ${budget.amount} ${budget.currency} ≈ ${item.estimatedQuantity} ${item.symbol} (chưa gồm phí mạng)`
+        : ': chưa có quote hợp lệ để xác nhận số lượng mua theo ngân sách' : '')).join(', ')
     return this.save(userId, owner, { id, status: 'RECOMMENDED', intent, recommendations,
       network: network === 'mainnet' ? 'mainnet' : 'devnet', warnings: this.discoveryWarnings(),
       message: `Na tìm thấy ${recommendations.length} RWA đã được duyệt${category ? ` cho nhóm ${category}` : ''}: ${listed}. ` +
