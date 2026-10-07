@@ -37,3 +37,8 @@ keypair.json
 service-account*.json
 serviceAccount*.json
 *-firebase-adminsdk-*.json
+
+# Local development notes / temporary files
+.tensor-findcollection.md
+.tensor-getmintsbycollid.md
+.tensor-quickstart.md

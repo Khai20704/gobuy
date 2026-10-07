@@ -117,13 +117,34 @@ export const rwaIntentSchema = z.object({
   quantity: z.string().regex(/^\d+(?:\.\d{1,12})?$/).refine(v => Number(v) > 0).optional(),
   condition: rwaPriceConditionSchema.optional(),
   maxTotalSpend: positiveUnits.optional(), maxSpendCurrency: z.enum(['SOL', 'USDC']).optional(),
+  // A request is either about ONE named asset (SPECIFIC_ASSET) or about a category of approved assets
+  // (CATEGORY_DISCOVERY). A discovery request names no symbol and no mint: the whole sentence is NEVER
+  // used as an asset identifier or as a canonical-mint lookup key.
+  requestKind: z.enum(['SPECIFIC_ASSET', 'CATEGORY_DISCOVERY']).optional(),
+  // The category a user asked for (for example TECHNOLOGY). It only filters and ranks candidates that
+  // RWA_APPROVED_LIST has already approved, and can never grant approval by itself.
+  desiredCategory: z.string().min(1).max(40).optional(),
 }).strict()
 export type RWAIntent = z.infer<typeof rwaIntentSchema>
+
+/** One already-approved candidate returned by a category discovery, with market data and a rank. */
+export const rwaRecommendationSchema = z.object({
+  symbol: z.string().min(1).max(24), mint, name: z.string().min(1).max(120), category: rwaCategorySchema,
+  // Jupiter market data only. Never used to decide identity or authenticity.
+  priceUsd: z.number().finite().nonnegative().nullable(),
+  withinBudget: z.boolean().nullable(),
+  score: z.number().finite().min(0).max(100),
+  reasons: z.array(z.string()).default([]),
+}).strict()
+export type RWARecommendation = z.infer<typeof rwaRecommendationSchema>
+
 export const rwaReplySchema = z.object({
   id: z.uuid(),
   status: z.enum(['NEEDS_INPUT', 'REJECTED', 'QUOTED', 'APPROVED', 'PENDING', 'CONFIRMED', 'FAILED',
-    'WAITING_FOR_PRICE', 'EXECUTING', 'EXECUTION_UNAVAILABLE', 'EXPIRED', 'CANCELLED']),
+    'WAITING_FOR_PRICE', 'EXECUTING', 'EXECUTION_UNAVAILABLE', 'EXPIRED', 'CANCELLED', 'RECOMMENDED']),
   message: z.string(), intent: rwaIntentSchema.optional(), asset: rwaAssetSchema.optional(),
+  // Category discovery returns ranked already-approved candidates instead of one asset/order.
+  recommendations: z.array(rwaRecommendationSchema).optional(),
   quote: z.object({ inputMint: mint, outputMint: mint, inAmount: positiveUnits, outAmount: positiveUnits,
     minOutput: positiveUnits, slippageBps: z.number(), expiresAt: z.iso.datetime(),
     policyValueLamports: z.number().int().positive(), network: z.enum(['mainnet', 'devnet']), route: z.array(z.string()) }).optional(),
@@ -137,5 +158,7 @@ export type RWAReply = z.infer<typeof rwaReplySchema>
 export const assetResolutionViewSchema = z.object({
   assetType: z.enum(['RWA', 'NFT', 'UNKNOWN']),
   reason: z.string().min(1), symbol: z.string().nullable(), mint: z.string().nullable(), blocked: z.boolean(),
+  // Set only for a CATEGORY_DISCOVERY request (for example TECHNOLOGY); null for a specific asset.
+  category: z.string().max(40).nullable().optional(),
 }).strict()
 export type AssetResolutionView = z.infer<typeof assetResolutionViewSchema>

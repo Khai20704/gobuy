@@ -57,7 +57,7 @@ export function investmentRoutes(authenticate: RequestHandler, origins: string[]
     const registry = await RWARegistry.configured()
     const resolution = new AssetResolver(registry, nftEvidence).resolve(input.text)
     res.json({ assetType: resolution.assetType, reason: resolution.reason, symbol: resolution.symbol ?? null,
-      mint: resolution.mint ?? null, blocked: resolution.blocked })
+      mint: resolution.mint ?? null, blocked: resolution.blocked, category: resolution.category ?? null })
   })
   router.get('/preferences', async (_req, res) => res.json(await twin.read(res.locals.identity.uid)))
   router.put('/preferences', async (req, res) => res.json(await twin.update(res.locals.identity.uid, body(investmentPreferencesSchema, req.body))))

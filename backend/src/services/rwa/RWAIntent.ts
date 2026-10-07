@@ -43,9 +43,12 @@ export function extractRWASymbol(text: string, assets: RWAAsset[]): string | und
   const padded = ' ' + normalizeIntentText(text).replace(/[^a-z0-9]+/g, ' ') + ' '
   const approved = assets.find(asset => padded.includes(' ' + asset.symbol.toLowerCase() + ' '))
   if (approved) return approved.symbol
-  const match = text.match(/\b[A-Za-z]{2,10}[xX]\b/) ?? text.match(/\b[A-Z]{3,6}\b/)
-  const token = match?.[0]
-  if (!token || STOPWORDS.has(token.toLowerCase())) return undefined
+  const named = assets.filter(asset => padded.includes(' ' + normalizeIntentText(asset.name).replace(/[^a-z0-9]+/g, ' ').trim() + ' '))
+  if (named.length === 1) return named[0].symbol
+  const tokens = [...text.matchAll(/\b[A-Za-z]{2,10}[xX]\b/g), ...text.matchAll(/\b[A-Z]{3,6}\b/g)]
+  const token = tokens.map(match => match[0]).find(token => !STOPWORDS.has(token.toLowerCase())
+    && !['tech', 'chip', 'bond', 'bonds', 'stocks', 'silver', 'oil'].includes(token.toLowerCase()))
+  if (!token) return undefined
   return token.slice(0, 24)
 }
 
@@ -55,16 +58,40 @@ export function isRWARequest(text: string, assets: RWAAsset[] = []): boolean {
   return /\b(rwa|tokenized|token hoa|vang|gold|treasury|trai phieu|equity|co phieu|stock|etf|commodity|hang hoa)\b/.test(normalizeIntentText(text))
 }
 
+/**
+ * A category the user may ask for instead of a named asset. `keywords` are matched against the
+ * normalized text only to READ the request; they are never evidence that a token is a real RWA.
+ * `subtype`, when present, is the closed RWA_APPROVED_LIST category the label maps onto. TECHNOLOGY
+ * has no closed category (a technology xStock is stored as EQUITY), so it is matched by metadata.
+ */
+export interface RWACategoryHint { label: string; subtype?: RWACategory; keywords: string[] }
+export const RWA_CATEGORY_HINTS: RWACategoryHint[] = [
+  { label: 'TECHNOLOGY', keywords: ['technology', 'tech', 'cong nghe', 'semiconductor', 'software', 'chip',
+    'nvidia', 'nvda', 'tesla', 'tsla', 'apple', 'aapl', 'microsoft', 'msft', 'amd', 'nasdaq'] },
+  { label: 'EQUITY', subtype: 'EQUITY', keywords: ['equity', 'co phieu', 'stock', 'stocks'] },
+  { label: 'GOLD', subtype: 'GOLD', keywords: ['gold', 'vang'] },
+  { label: 'TREASURY', subtype: 'TREASURY', keywords: ['treasury', 'trai phieu', 'bond', 'bonds', 'usdy', 'ousg', 't-bill', 'tbill'] },
+  { label: 'ETF', subtype: 'ETF', keywords: ['etf'] },
+  { label: 'COMMODITY', subtype: 'COMMODITY', keywords: ['commodity', 'hang hoa', 'oil', 'silver'] },
+]
+
+/** Reads the category a request is about, if any. Returns undefined for a request with no theme. */
+export function detectRWACategory(text: string): RWACategoryHint | undefined {
+  const padded = ' ' + normalizeIntentText(text).replace(/[^a-z0-9]+/g, ' ') + ' '
+  return RWA_CATEGORY_HINTS.find(hint => hint.keywords.some(keyword => padded.includes(' ' + keyword + ' ')))
+}
+
 export function parseRWAIntent(text: string, assets: RWAAsset[]): RWAIntent {
   const value = normalizeIntentText(text)
   if (/\b(electronics|dien tu)\b/.test(value)) throw new InputError('Electronics không được phép trong delegated-spending MVP NFT/RWA.')
-  const subtype: RWACategory | undefined = /\b(vang|gold)\b/.test(value) ? 'GOLD'
-    : /\b(treasury|trai phieu|usdy|ousg)\b/.test(value) ? 'TREASURY'
-      : /\b(etf)\b/.test(value) ? 'ETF' : /\b(equity|co phieu|stock)\b/.test(value) ? 'EQUITY'
-        : /\b(commodity|hang hoa)\b/.test(value) ? 'COMMODITY' : undefined
+  const hint = detectRWACategory(text)
+  const subtype: RWACategory | undefined = hint?.subtype
   const symbol = extractRWASymbol(text, assets)
   const mints = text.match(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g) ?? []
   if (mints.length > 1 || /\b(nan|infinity)\b/.test(value)) throw new InputError('Nêu một số tiền dương và một asset RWA cụ thể.')
+  // A request naming no symbol and no mint is a CATEGORY_DISCOVERY, never a specific asset. The raw
+  // sentence is never used as an identifier, so "Tìm một RWA công nghệ" can never become a mint.
+  const requestKind: RWAIntent['requestKind'] = symbol || mints[0] ? 'SPECIFIC_ASSET' : 'CATEGORY_DISCOVERY'
 
   // 1. Price trigger. Anchored on a price word ("giá"/"price") or on "$" after a comparison, so a
   //    bare "dưới 1 SOL" ceiling is NOT read as a price (see order B).
@@ -103,11 +130,13 @@ export function parseRWAIntent(text: string, assets: RWAAsset[]): RWAIntent {
     currency = 'USDC'
     amount = toUnits(dollarSpend[1], 'USDC')
   }
+  const wantsBuy = /\b(mua|buy|purchase|acquire)\b/.test(value) && !searchOnlyRequest(text) && !!(amount || quantity)
   return rwaIntentSchema.parse({
     category: 'RWA', subtype, symbol, mint: mints[0], amount, currency, order, quantity, maxTotalSpend, maxSpendCurrency,
     condition: targetPrice === undefined ? undefined : { type: 'PRICE_BELOW', targetPrice, priceCurrency: 'USD' },
-    // Without an amount, quantity or condition there is nothing to act on: report SEARCH so the
-    // caller asks for the missing detail instead of inventing one.
-    action: /\b(mua|buy|purchase|acquire)\b/.test(value) && !searchOnlyRequest(text) && (amount || quantity) ? 'BUY' : 'SEARCH',
+    requestKind, desiredCategory: hint?.label,
+    // A discovery request asks Na to choose, so it carries no spend authority and can never be a BUY.
+    // Without an amount, quantity or condition there is nothing to act on either, so report SEARCH.
+    action: requestKind === 'SPECIFIC_ASSET' && wantsBuy ? 'BUY' : 'SEARCH',
   })
 }

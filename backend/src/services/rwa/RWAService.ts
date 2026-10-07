@@ -6,6 +6,7 @@ import { AssetResolver, type AssetResolution } from './AssetResolver.js'
 import { RWAConditionalOrders, isTerminalStatus, quantityUnits } from './RWAConditionalOrders.js'
 import { parseRWAIntent } from './RWAIntent.js'
 import { RWARegistry } from './RWARegistry.js'
+import { filterApprovedByCategory, rankApprovedCandidates, type PricedCandidate } from './RWARecommendation.js'
 import { JupiterQuoteService } from '../jupiter/JupiterQuoteService.js'
 import { SOL_MINT, USDC_MINT } from '../jupiter/types.js'
 
@@ -67,12 +68,51 @@ export class RWAService {
   /** Canonical classification. The route uses this instead of any frontend keyword list. */
   classify(text: string): AssetResolution { return this.resolver.resolve(text) }
 
+  /**
+   * Category discovery: ranks ALREADY-APPROVED candidates for a category and budget. Identity still
+   * comes only from RWA_APPROVED_LIST, so no market signal can add, promote or reject a token here.
+   * With no approved candidate for the category, it says so plainly and never invents a token.
+   */
+  private async discoverCategory(userId: string, owner: string, id: string, text: string,
+    category: string | undefined, budget: { amount: number; currency: 'SOL' | 'USDC' } | undefined): Promise<RWAReply> {
+    const label = category ? `${category.toLowerCase()} ` : ''
+    const candidates = filterApprovedByCategory(this.registry.list(), category)
+    if (candidates.length === 0) throw new InputError(`No approved ${label}RWA candidates are currently available.`)
+    const priced: PricedCandidate[] = []
+    for (const asset of candidates) priced.push({ asset, priceUsd: await this.observedPriceUsd(asset) })
+    const recommendations = rankApprovedCandidates(priced, budget)
+    if (recommendations.length === 0) {
+      throw new InputError(`No approved ${label}RWA candidates fit the ≈${budget?.amount ?? ''} ${budget?.currency ?? ''} budget.`)
+    }
+    let intent: RWAIntent | undefined
+    try { intent = parseRWAIntent(text, this.registry.list()) } catch { intent = undefined }
+    const network = await this.registry.network()
+    const listed = recommendations.slice(0, 5).map(item =>
+      `${item.symbol} (${item.category}${item.priceUsd === null ? '' : ` ≈ ${item.priceUsd} USD`})`).join(', ')
+    return this.save(userId, owner, { id, status: 'RECOMMENDED', intent, recommendations,
+      network: network === 'mainnet' ? 'mainnet' : 'devnet', warnings: this.discoveryWarnings(),
+      message: `Na tìm thấy ${recommendations.length} RWA đã được duyệt${category ? ` cho nhóm ${category}` : ''}: ${listed}. ` +
+        'Đây là thông tin thị trường để tham khảo, không phải lời khuyên đầu tư và không có giao dịch nào được tạo. ' +
+        'Danh tính do canonical mint trong RWA_APPROVED_LIST quyết định; thanh khoản, khối lượng và độ phổ biến chỉ dùng để xếp hạng các ứng viên đã được duyệt.' })
+  }
+
+  private discoveryWarnings() {
+    return ['Ngân sách USDC là trần chi tiêu tham khảo, không phải số lượng token.',
+      'Danh tính RWA do canonical mint trong RWA_APPROVED_LIST quyết định; thanh khoản, khối lượng và độ phổ biến chỉ xếp hạng các ứng viên đã được duyệt, không quyết định độ thật.',
+      'Giá lấy từ Jupiter mainnet là dữ liệu thị trường; GoBuy chưa có đường thực thi swap nên không có giao dịch nào được tạo.']
+  }
+
   async discover(userId: string, text: string, owner = ''): Promise<RWAReply> {
     const id = randomUUID()
     let intent: RWAIntent | undefined
     try {
       const resolution = this.classify(text)
       if (resolution.assetType === 'NFT') throw new InputError('Yêu cầu này là NFT, không phải RWA.')
+      // CATEGORY_DISCOVERY names no specific asset, so it searches the approved list instead of
+      // resolving one canonical mint. RWA_APPROVED_LIST still decides every identity returned here.
+      if (resolution.reason === 'category_discovery') {
+        return await this.discoverCategory(userId, owner, id, text, resolution.category, resolution.budget)
+      }
       if (resolution.assetType !== 'RWA' || resolution.blocked || !resolution.approved) {
         const symbol = resolution.symbol ?? text.trim().slice(0, 40)
         // An empty list is a missing approval, not a failed check: never imply the asset was judged fake.
