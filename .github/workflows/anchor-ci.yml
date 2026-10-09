@@ -10,7 +10,8 @@ name: Anchor program CI
 #   * anchor-lang 1.2.0 declares `rust-version = 1.89`, so the host toolchain is pinned to 1.89.0.
 #   * The Anchor 1.2.0 CLI depends on solana-cli-config/solana-client ^3.0.14, so the Agave
 #     (Solana) CLI is pinned to v3.0.14. `cargo test` runs on the host; `cargo build-sbf` needs
-#     the platform-tools that ship with that release.
+#     a separately pinned platform-tools v1.52 (Rust 1.89, edition-2024-capable Cargo).
+#     Agave's default v1.51 uses Rust 1.84.1 / Cargo 1.84.0, regardless of the host pin.
 # Do not replace these with floating versions: the SBF std and the program's dependency graph are
 # version-sensitive.
 
@@ -36,6 +37,7 @@ permissions:
 env:
   RUST_TOOLCHAIN: '1.89.0'
   AGAVE_VERSION: 'v3.0.14'
+  SBF_TOOLS_VERSION: 'v1.52'
   # Existing Devnet program identity. Read-only here; nothing in this workflow can change it.
   PROGRAM_ID: 'CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE'
 
@@ -66,18 +68,53 @@ jobs:
       - name: Show the pinned toolchain versions
         run: |
           set -euo pipefail
-          solana --version
+          mkdir -p build-logs
+          {
+            rustc --version
+            cargo --version
+            solana --version
+            # This reports the builder's DEFAULT tools, not the override below.
+            cargo build-sbf --version
+            echo "Selected SBF platform-tools: $SBF_TOOLS_VERSION"
+            cargo build-sbf --install-only --tools-version "$SBF_TOOLS_VERSION"
+            sbf_bin="$HOME/.cache/solana/$SBF_TOOLS_VERSION/platform-tools/rust/bin"
+            # Fail here if the installer fell back to its older default version.
+            echo "SBF Cargo executable: $(readlink -f "$sbf_bin/cargo")"
+            "$sbf_bin/rustc" --version
+            "$sbf_bin/cargo" --version
+          } 2>&1 | tee build-logs/toolchain-versions.log
 
       - name: Check the mirrored Tensor constants (Rust, shared client, official SDK)
         run: node scripts/verify-tensor-constants.mjs
 
       - name: Compile the program to SBF bytecode
         run: |
-          set -o pipefail
+          set -euo pipefail
           mkdir -p build-logs
+          # build-sbf runs host metadata before forwarding --locked to SBF Cargo.
+          cargo metadata --manifest-path anchor/programs/gobuy_na/Cargo.toml --locked --format-version 1 > /dev/null
           cargo build-sbf \
+            --tools-version "$SBF_TOOLS_VERSION" \
+            --verbose \
             --manifest-path anchor/programs/gobuy_na/Cargo.toml \
-            --sbf-out-dir anchor/target/deploy 2>&1 | tee build-logs/cargo-build-sbf.log
+            --sbf-out-dir anchor/target/deploy -- --locked 2>&1 | tee build-logs/cargo-build-sbf.log
+
+      - name: Record the actual SBF Cargo selection and check the lockfile
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p build-logs
+          {
+            sbf_bin="$HOME/.cache/solana/$SBF_TOOLS_VERSION/platform-tools/rust/bin"
+            sbf_rust_version=$("$sbf_bin/rustc" --version | awk '{print $2}' | cut -d- -f1)
+            sbf_toolchain="${sbf_rust_version}-sbpf-solana-${SBF_TOOLS_VERSION}"
+            echo "SBF rustup toolchain: $sbf_toolchain"
+            actual_cargo=$(rustup which --toolchain "$sbf_toolchain" cargo)
+            echo "Actual SBF Cargo executable: $actual_cargo"
+            test "$(readlink -f "$actual_cargo")" = "$(readlink -f "$sbf_bin/cargo")"
+            "$actual_cargo" --version
+          } 2>&1 | tee build-logs/sbf-cargo-selection.log
+          git diff --exit-code -- anchor/Cargo.lock
 
       - name: Verify the compiled artifact still carries the existing program id
         run: node scripts/verify-sbf-program-id.mjs anchor/target/deploy/gobuy_na.so "$PROGRAM_ID"
@@ -94,7 +131,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p build-logs
-          cargo test --manifest-path anchor/Cargo.toml --all-targets 2>&1 | tee build-logs/cargo-test.log
+          cargo test --manifest-path anchor/Cargo.toml --all-targets --locked 2>&1 | tee build-logs/cargo-test.log
 
       - name: Upload build logs and the SBF artifact
         if: always()

@@ -407,6 +407,7 @@ Pinned versions, each derived rather than guessed:
 | --- | --- | --- |
 | Rust toolchain | `1.89.0` | `anchor-lang 1.2.0` declares `rust-version = "1.89"` |
 | Agave (Solana) CLI | `v3.0.14` | the Anchor 1.2.0 CLI depends on `solana-cli-config ^3.0.14` |
+| SBF platform-tools | `v1.52` | bundled Rust 1.89.0 supports Anchor's MSRV and edition 2024 |
 | Node | runner default | the existing repo scripts |
 
 The workflow:
@@ -414,16 +415,39 @@ The workflow:
 * installs the pinned toolchain with `rustup` (no third-party action) and the Agave CLI from the
   official `https://release.anza.xyz/v3.0.14/install` endpoint;
 * runs `node scripts/verify-tensor-constants.mjs`;
-* runs `cargo build-sbf --manifest-path anchor/programs/gobuy_na/Cargo.toml --sbf-out-dir anchor/target/deploy`
+* installs platform-tools `v1.52` and logs host Rust/Cargo, builder version, selected tools and bundled Rust/Cargo;
+* runs `cargo build-sbf --tools-version v1.52 --verbose --manifest-path anchor/programs/gobuy_na/Cargo.toml --sbf-out-dir anchor/target/deploy -- --locked`
   to compile the SBF bytecode;
+* records the actual Cargo executable selected through rustup and checks that `anchor/Cargo.lock` is unchanged;
 * verifies the compiled artifact still contains the existing program id bytes;
 * records a SHA-256 of the artifact;
-* **then** runs `cargo test --manifest-path anchor/Cargo.toml --all-targets` (host unit tests);
+* **then** runs `cargo test --manifest-path anchor/Cargo.toml --all-targets --locked` (host unit tests);
 * uploads `build-logs/**` and `anchor/target/deploy/*.so` as a 30-day artifact.
 
 The SBF build deliberately runs *before* the host tests: the compiled artifact is the primary
 deliverable, so a failing host test still leaves a `.so` and its logs to inspect. The artifact
 upload step uses `if: always()` for the same reason.
+
+### First CI failure: edition 2024
+
+The first GitHub Actions run failed parsing `block-buffer-0.12.1/Cargo.toml` with Cargo
+1.84.0. The host Rust 1.89.0 pin does not control SBF compilation:
+[Agave v3.0.14's toolchain code](https://github.com/anza-xyz/agave/blob/v3.0.14/platform-tools-sdk/cargo-build-sbf/src/toolchain.rs)
+defaults to platform-tools v1.51 (Rust 1.84.1) and links a separate rustup toolchain.
+The builder invokes Cargo with that explicit toolchain override.
+
+The workflow now uses the supported `--tools-version v1.52` override.
+[The v1.52 release](https://github.com/anza-xyz/platform-tools/releases/tag/v1.52) supplies
+Rust 1.89.0 / LLVM 20, meeting Anchor 1.2.0's minimum as well as edition 2024 support.
+Exact bundled Cargo version and executable are recorded at runtime; the builder's
+`--version` output still describes its default v1.51, not the selected override.
+An explicit installation and executable check prevent silently continuing with an older fallback.
+Host metadata is checked with `--locked` before SBF compilation, and both compilation and
+host tests use `--locked`. No dependency versions or lockfile entries were changed.
+
+This fix remains **unverified on GitHub Actions** until the updated workflow passes.
+Program identity, PDA seeds, CPI, authorization, backend purchasing and completed orders
+are unchanged. No deployment, wallet operation or transaction is part of this fix.
 
 It has `permissions: contents: read`, **never** deploys, **never** upgrades, **never** signs a
 transaction, and needs **no** wallet keypair, private key, RPC credential or repository secret. Only
