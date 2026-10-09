@@ -1,0 +1,82 @@
+name: Tensor integration prerequisites (no purchase claim)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Anchor program CI run supplying the compiled program
+        required: true
+        default: '37964523776'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  real-tensor-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify build provenance
+        uses: actions/github-script@v7
+        env:
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        with:
+          script: |
+            const fs = require('fs');
+            if (!/^\d+$/.test(process.env.BUILD_RUN_ID)) throw new Error('Invalid run ID');
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: Number(process.env.BUILD_RUN_ID)
+            });
+            if (run.conclusion !== 'success' || run.path !== '.github/workflows/anchor-ci.yml'
+                || run.head_repository.full_name.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase()) {
+              throw new Error('Require successful existing Anchor CI in this repository');
+            }
+            fs.mkdirSync('integration-evidence', { recursive: true });
+            fs.writeFileSync('integration-evidence/build-provenance.json', JSON.stringify({
+              id: run.id, sourceCommit: run.head_sha, url: run.html_url,
+              harnessCommit: context.sha, conclusion: run.conclusion
+            }, null, 2));
+      - name: Reuse compiled program (no rebuild or deployment)
+        uses: actions/download-artifact@v4
+        with:
+          name: anchor-program-sbf
+          path: .tmp-anchor-artifact
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+      - name: Check artifact identity and original build checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-sbf-program-id.mjs .tmp-anchor-artifact/anchor/target/deploy/gobuy_na.so CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE
+          cd .tmp-anchor-artifact
+          sha256sum --check build-logs/sha256.txt
+      - name: Install the same Agave release as Anchor CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.14/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Snapshot real programs and probe local BuyLegacy dispatch
+        run: node scripts/tensor-local-preflight.mjs integration-evidence .tmp-anchor-artifact/anchor/target/deploy/gobuy_na.so
+      - name: Report the integration gate honestly
+        if: always()
+        shell: bash
+        run: |
+          echo 'This job checks prerequisites only. GoBuy CPI purchase integration: NOT EXECUTED.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'A green preflight is not evidence of NFT delivery, spending, receipts or rollback.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve public evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tensor-integration-prerequisites
+          path: |
+            integration-evidence/*.json
+            integration-evidence/*.log
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,68 @@
+{
+  "kind": "availability-only",
+  "startedAt": "2026-10-09T17:35:47.091Z",
+  "remote": "https://api.mainnet-beta.solana.com",
+  "local": "http://127.0.0.1:18899",
+  "programs": [
+    {
+      "name": "tensor",
+      "address": "TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp",
+      "programData": "FKDbtRVDvxhzubDub6PKqu9kAAHtNm6VZ1zES55VKkAh",
+      "status": "SNAPSHOTTED",
+      "slot": 454943972,
+      "deploymentSlot": "382037338",
+      "sha256": "f8b67c44f18d44a35695e20e41e200fe3d1282e335dc4c63674c34b1bcdb2a42",
+      "bytes": 8000000
+    },
+    {
+      "name": "metadata",
+      "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+      "programData": "PwDiXFxQsGra4sFFTT8r1QWRMd4vfumiWC1jfWNfdYT",
+      "status": "SNAPSHOTTED",
+      "slot": 454944011,
+      "deploymentSlot": "380725176",
+      "sha256": "31f0a627dba051a938de650464e55cc5397a4be0fd496929c1f9cf02fe5e9011",
+      "bytes": 793991
+    },
+    {
+      "name": "authorizationRules",
+      "address": "auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg",
+      "programData": "BXPrcDXuxa4G7m5qj4hu9Fs48sAPJqsjK5Y5S8qxH44J",
+      "status": "SNAPSHOTTED",
+      "slot": 454944027,
+      "deploymentSlot": "208810372",
+      "sha256": "47fba67c40ff5f3f44d8465dae3b63876c549d1671a39d5c5a5132524d09233c",
+      "bytes": 1246288
+    },
+    {
+      "name": "token",
+      "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "programData": "3gvYRKWyXRR9xKWe1ZjPhLY5ZJRN7KDB4rFZFGoJfFk2",
+      "status": "SNAPSHOTTED",
+      "slot": 454944039,
+      "deploymentSlot": "419472000",
+      "sha256": "8190d3f7ceb6cb7a7a8d8924bff89f9f611e15ce1f806f2b6237f3311a98f697",
+      "bytes": 108600
+    },
+    {
+      "name": "associatedToken",
+      "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "status": "SNAPSHOTTED",
+      "loader": "BPFLoader2111111111111111111111111111111111",
+      "slot": 454944043,
+      "sha256": "6804554e69fd3a58caa191dc4a58f4c67223d30ca28ab8987f39fc18d2f7374d",
+      "bytes": 105032
+    }
+  ],
+  "integration": "BLOCKED_NOT_EXECUTED",
+  "purchases": 0,
+  "signatures": [],
+  "gobuy": {
+    "programId": "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE",
+    "sha256": "9c092a8d33903079f73d3ede303e71ea29ece86ff14f2f08a7f2d548943c902f",
+    "bytes": 298456
+  },
+  "availability": "BLOCKED",
+  "error": "solana-test-validator unavailable; use Linux workflow",
+  "finishedAt": "2026-10-09T17:36:03.746Z"
+}

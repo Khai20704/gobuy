@@ -1,5 +1,12 @@
 # Tensor CPI verification and safe SBF build
 
+> **Current status (Step 6, 2026-10-10):** GitHub Anchor CI run 37964523776 succeeded.
+> Real Tensor and four dependency binaries were retrieved with read-only RPC calls.
+> Local execution is blocked by the missing validator; no GoBuy CPI purchase is verified.
+> See [the Step 6 report](TENSOR_INTEGRATION_STEP6.md) for evidence, the separate Linux
+> preflight workflow, and the unimplemented integration acceptance matrix.
+> The Step 5 text below is historical; its build-pending statements are superseded.
+
 Status: the second GitHub Actions run passed toolchain setup and reached `gobuy_na`, then failed
 with five Rust errors. The fixes below have been applied; a successful SBF build is still
 **not verified**, and **no** CPI has been executed. Nothing was deployed, no wallet
