@@ -1,5 +1,5 @@
 // Read-only remote snapshots; unsigned simulations only on a child-owned local validator.
-// This is an availability probe, NOT a GoBuy purchase integration test.
+// Default: availability only. --step7 runs the opt-in local suite after all probes pass.
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, writeFile, readFile, open, mkdtemp, readdir, copyFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
@@ -258,6 +258,22 @@ try {
     report.availability = 'LOCAL_BUY_LEGACY_DISPATCH_VERIFIED';
     report.tensorDispatchExecuted = true;
     report.limit = 'Unsigned direct Tensor simulation, missing accounts; no GoBuy CPI, listing, delivery, receipt, or rollback proof';
+    if (process.argv.includes('--step7')) {
+      // Only hand control to the suite after verifying this child-owned validator and bytecode.
+      await save('report.json', report);
+      const { runStep7 } = await import('./tensor-local-e2e.mjs');
+      try {
+        await runStep7({ evidenceDir: resolve('docs/evidence/step7'), preflight: report });
+      } finally {
+        const result = JSON.parse(await readFile(resolve('docs/evidence/step7/report.json'), 'utf8'));
+        report.integration = result.status;
+        report.step7Evidence = 'docs/evidence/step7/report.json';
+        const purchase = result.tests?.find(test => test.name === 'valid-purchase' && test.status === 'PASS');
+        report.purchases = purchase ? 1 : 0;
+        report.signatures = purchase ? [purchase.signature] : [];
+        report.limit = 'Step 7 results and transaction evidence are reported separately; dispatch alone is not purchase proof';
+      }
+    }
   }
 } catch (error) {
   report.availability = 'BLOCKED';

@@ -1,5 +1,12 @@
 # Step 6: real Tensor integration gate
 
+> Current baseline: [run 37969595238](https://github.com/Khai20704/gobuy/actions/runs/37969595238)
+> passed at commit `a719a284a76dafc38f3c7f3683caf561aa4ea99d` (public API verified).
+> The user reports validator startup, genuine program loading and Tensor dispatch all true.
+> Full GoBuy CPI purchase remains unverified. See [Step 7](TENSOR_INTEGRATION_STEP7.md)
+> for the opt-in end-to-end harness and its blocked execution status. The earlier
+> startup-pending statements below are historical and superseded by this passing baseline.
+
 ## Step 6.1: startup diagnostics (current status)
 
 ### ROOT_CAUSE

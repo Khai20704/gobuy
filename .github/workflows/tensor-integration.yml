@@ -13,6 +13,11 @@ on:
         required: true
         default: true
         type: boolean
+      step7:
+        description: Execute fresh local GoBuy to Tensor CPI purchase and negative tests
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -24,9 +29,24 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Initialize current Step 7 execution status
+        if: inputs.step7
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          fs.mkdirSync('docs/evidence/step7', { recursive: true });
+          fs.writeFileSync('docs/evidence/step7/report.json', JSON.stringify({
+            status: 'BLOCKED', reason: 'Prerequisites or suite not completed in this run',
+            realTensorCpi: 'NOT_VERIFIED', originalNftDelivered: 'NOT_TESTED',
+            vaultPdaPayment: 'NOT_VERIFIED', authorizationAndReceipt: 'NOT_VERIFIED',
+            negativePassed: 0, negativeTotal: 9, runId: process.env.GITHUB_RUN_ID
+          }, null, 2));
+          NODE
       - name: Verify build provenance
         uses: actions/github-script@v7
         env:
@@ -47,6 +67,35 @@ jobs:
               id: run.id, sourceCommit: run.head_sha, url: run.html_url,
               harnessCommit: context.sha, conclusion: run.conclusion
             }, null, 2));
+      - name: Verify Step 7 artifact source matches the tested Anchor source
+        if: inputs.step7
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const p = JSON.parse(fs.readFileSync('integration-evidence/build-provenance.json', 'utf8'));
+          if (!/^[0-9a-f]{40}$/.test(p.sourceCommit)) throw new Error('Invalid build source SHA');
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+          const builtTree = git('rev-parse', `${p.sourceCommit}:anchor`);
+          const testedTree = git('rev-parse', 'HEAD:anchor');
+          if (builtTree !== testedTree) throw new Error('Anchor source differs: rebuild via Anchor CI and select that artifact');
+          const buildWorkflow = git('rev-parse', `${p.sourceCommit}:.github/workflows/anchor-ci.yml`);
+          if (buildWorkflow !== git('rev-parse', 'HEAD:.github/workflows/anchor-ci.yml')) throw new Error('Build toolchain workflow changed');
+          Object.assign(p, { anchorSourceTreeVerified: true, builtTree, testedTree, buildWorkflow });
+          fs.mkdirSync('docs/evidence/step7', { recursive: true });
+          fs.writeFileSync('docs/evidence/step7/build-provenance.json', JSON.stringify(p, null, 2));
+          NODE
+      - name: Install locked test dependencies and validate instruction construction
+        if: inputs.step7
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm run build -w shared
+          npm run build -w @gobuy/tensor-adapter
+          node --import tsx scripts/tensor-local-e2e.mjs --check-encoding
       - name: Reuse compiled program (no rebuild or deployment)
         uses: actions/download-artifact@v4
         with:
@@ -70,12 +119,17 @@ jobs:
       - name: Snapshot real programs and probe local BuyLegacy dispatch
         env:
           INCREMENTAL_STARTUP: ${{ inputs.incremental_startup }}
+          STEP7: ${{ inputs.step7 }}
         shell: bash
         run: |
           set -euo pipefail
           args=()
           if [ "$INCREMENTAL_STARTUP" = 'true' ]; then args+=(--incremental-startup); fi
-          node scripts/tensor-local-preflight.mjs integration-evidence .tmp-anchor-artifact/anchor/target/deploy/gobuy_na.so "${args[@]}"
+          if [ "$STEP7" = 'true' ]; then
+            node --import tsx scripts/tensor-local-preflight.mjs integration-evidence .tmp-anchor-artifact/anchor/target/deploy/gobuy_na.so "${args[@]}" --step7
+          else
+            node scripts/tensor-local-preflight.mjs integration-evidence .tmp-anchor-artifact/anchor/target/deploy/gobuy_na.so "${args[@]}"
+          fi
       - name: Print startup diagnostics on failure
         if: failure()
         shell: bash
@@ -89,10 +143,14 @@ jobs:
         if: always()
         shell: bash
         run: |
-          echo 'This job checks prerequisites only. GoBuy CPI purchase integration: NOT EXECUTED.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'A green preflight is not evidence of NFT delivery, spending, receipts or rollback.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'A green prerequisite probe alone is not evidence of GoBuy purchase success.' >> "$GITHUB_STEP_SUMMARY"
           if [ -f integration-evidence/report.json ]; then
             node -e 'const r=require("./integration-evidence/report.json"); for (const k of ["validatorStarted","genuineProgramsLoaded","tensorDispatchExecuted","integration"]) console.log(`${k}: ${r[k] ?? "NOT_REACHED"}`)' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f docs/evidence/step7/report.json ]; then
+            node -e 'const r=require("./docs/evidence/step7/report.json"); for (const k of ["status","realTensorCpi","originalNftDelivered","vaultPdaPayment","authorizationAndReceipt","negativePassed","negativeTotal"]) console.log(`Step 7 ${k}: ${r[k]}`)' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Step 7: NOT EXECUTED (not selected or blocked before suite)' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Preserve public evidence only
         if: always()
@@ -102,5 +160,7 @@ jobs:
           path: |
             integration-evidence/*.json
             integration-evidence/*.log
+            docs/evidence/step7/*.json
+            docs/evidence/step7/*.log
           if-no-files-found: warn
           retention-days: 30
