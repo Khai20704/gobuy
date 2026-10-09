@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { assertPrePurchaseTokens } from './tensor-fixture-assertions.mjs';
 import { createMandateInstruction, mandatePdas } from '../backend/src/services/mandate/mandateInstructions.ts';
 import { decodeMandateAccount } from '../backend/src/services/mandate/MandateGuard.ts';
 import { createNftPurchaseAuthorizationInstruction, buyNftFromMandateInstruction,
@@ -322,9 +323,9 @@ export async function runStep7({ evidenceDir, preflight }) {
     await runCase('valid-purchase', async test => {
       const f = await fixture('valid-purchase'); successful = f;
       const before = await state(f, 'valid-purchase-before');
-      assert.equal(before.decoded.listingToken.amount, '1');
-      assert.equal(before.decoded.listingToken.owner, str(f.listing));
-      assert.equal(before.decoded.seller.amount, '0'); assert.equal(before.decoded.buyer, null);
+      assertPrePurchaseTokens(before, { mint: str(f.mint), listing: str(f.listing),
+        listAta: str(f.listAta), sellerAta: str(f.sellerAta), buyerAta: str(f.buyerAta),
+        seller: str(f.seller.publicKey), buyer: str(f.owner.publicKey), tokenProgram: str(token.TOKEN_PROGRAM_ID) });
       assert.equal(before.decoded.authorization.owner, str(f.owner.publicKey));
       assert.equal(before.decoded.authorization.executor, str(f.agent.publicKey));
       assert.equal(before.decoded.authorization.recipient, str(f.owner.publicKey));
@@ -337,12 +338,14 @@ export async function runStep7({ evidenceDir, preflight }) {
       const result = await ok('valid-purchase', [purchase(f)], f.agent);
       const cpi = cpiEvidence(f, result, true);
       const after = await state(f, 'valid-purchase-after');
+      assert(after.accounts.buyerAta.value && after.decoded.buyer, 'Purchase must leave an existing decoded buyer ATA');
       assert.equal(after.decoded.buyer.mint, str(f.mint)); assert.equal(after.decoded.buyer.owner, str(f.owner.publicKey));
       assert.equal(after.decoded.buyer.amount, '1');
       assert.equal(after.accounts.listing.value, null); assert.equal(after.accounts.listAta.value, null);
       const debit = lamports(before,'vault') - lamports(after,'vault');
       const fee = PRICE * 200n / 10000n; // reviewed Tensor taker fee, no brokers or royalties
-      const ataRent = BigInt(await conn.getMinimumBalanceForRentExemption(token.ACCOUNT_SIZE));
+      const ataRent = before.accounts.buyerAta.value === null
+        ? BigInt(await conn.getMinimumBalanceForRentExemption(token.ACCOUNT_SIZE)) : 0n;
       assert.equal(debit, PRICE + fee + ataRent);
       assert.equal(lamports(after,'feeVault') - lamports(before,'feeVault'), fee);
       assert.equal(lamports(after,'seller') - lamports(before,'seller'),

@@ -95,6 +95,7 @@ jobs:
           npm ci --ignore-scripts
           npm run build -w shared
           npm run build -w @gobuy/tensor-adapter
+          node --test scripts/tensor-fixture-assertions.test.mjs
           node --import tsx scripts/tensor-local-e2e.mjs --check-encoding
       - name: Reuse compiled program (no rebuild or deployment)
         uses: actions/download-artifact@v4
@@ -135,7 +136,7 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          for file in integration-evidence/*startup.json integration-evidence/*validator.log; do
+          for file in integration-evidence/*startup.json integration-evidence/*validator.log integration-evidence/buy-legacy-dispatch*.json integration-evidence/buy-legacy-dispatch.log; do
             echo "Diagnostic file: $file"
             tail -n 100 "$file"
           done

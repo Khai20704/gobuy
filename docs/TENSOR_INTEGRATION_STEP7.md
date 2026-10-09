@@ -1,5 +1,44 @@
 # Step 7: real GoBuy to Tensor CPI tests
 
+## Latest fix: closed seller ATA after genuine listing
+
+The supplied report for harness commit `74251a3e70778a3fa85d4438a4a419b413db2cca`
+(run `37975495485`) records `valid-purchase: FAIL`, with all nine negatives blocked.
+The actual `valid-purchase-before-state.json` was read from the user's extracted artifact:
+seller ATA and buyer ATA are absent, decoded seller/buyer are null, escrow exists with
+amount `1`, original mint `3FYJorzJRuzb6eA935pktX1fpVKw4PKZh48WcyC5tSpd` and listing authority
+`E15HPRqJZGPftXuNMWchXgPmTKpTBEXfAFxtsXFjNQCE`; receipt is null.
+
+Exact failing expression: `before.decoded.seller.amount` (former line 327).
+ListLegacy closes the seller token account after escrowing the NFT. The harness wrongly
+expected a decoded seller account with amount zero. This exception precedes the call that
+submits the GoBuy purchase; the expected account-less dispatch error 3005 is unrelated.
+
+Fix: `scripts/tensor-fixture-assertions.mjs` explicitly validates canonical addresses,
+SPL ownership, original mint, token authority, initialized/unfrozen state and balances.
+Escrow must exist with amount one. Seller/buyer may be absent with null decoded state;
+if present they must be correctly owned empty token accounts. No optional chaining or
+missing-account-to-zero fallback masks invalid escrow. The E2E harness uses this helper,
+requires an existing decoded buyer ATA after purchase, and charges expected ATA rent only
+when the buyer ATA was absent before purchase. CPI, payment, budgets, receipt and rollback
+assertions are retained; dispatch checks are untouched.
+
+Changed for this fix: `scripts/tensor-local-e2e.mjs`, new
+`scripts/tensor-fixture-assertions.mjs`, new `scripts/tensor-fixture-assertions.test.mjs`,
+`.github/workflows/tensor-integration.yml` (run regressions before E2E), and this report.
+Pre-existing workflow diagnostic edits and untracked slot-zero evidence were preserved.
+
+Local results: 9/9 regression tests, 13/13 existing purchase unit tests, offline SDK/packet
+checks, script syntax, workflow YAML and diff checks passed. These do not count as E2E.
+Full local E2E was attempted through preflight. Its first blocker was public RPC error
+`-32016: Minimum context slot has not been reached` while snapshotting Authorization Rules;
+the suite and all negative cases were not reached. The attempt report remains at
+`.tmp-step7-null-fix/report.json`. Linux CI is also necessary because this machine has no
+validator. No new GitHub Actions run was dispatched (no authenticated
+dispatch capability); there is **no new run ID**. Publish the fix and start a new run with
+`step7=true`. Original NFT delivery, Vault payment, receipt and all nine negative outcomes
+remain unverified. No on-chain program or historical state was modified.
+
 ## Latest dispatch-gate investigation
 
 ### Resolved with supplied simulation evidence
