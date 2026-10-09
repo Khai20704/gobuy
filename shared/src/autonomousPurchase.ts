@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { nftCandidateSchema, walletAddressSchema } from './acquisition.js'
 import { mandateSpendResponseSchema } from './mandate.js'
+import { devnetDeliverySchema, purchasePhaseSchema } from './devnetDelivery.js'
 
 /** Optional presentation metadata never substitutes for an executable listing identity. */
 export const autonomousNFTCandidateSchema = nftCandidateSchema.extend({
@@ -20,6 +21,8 @@ export const autonomousNFTCandidateSchema = nftCandidateSchema.extend({
 })
 export type AutonomousNFTCandidate = z.infer<typeof autonomousNFTCandidateSchema>
 export const autonomousPurchaseResultSchema = z.object({
+  deliveryMode: z.literal('DEVNET_DEMO_MINT').optional(), recipientWallet: walletAddressSchema.optional(),
+  phase: purchasePhaseSchema.optional(), delivery: devnetDeliverySchema.optional(),
   id: z.uuid(), execution: z.literal('Devnet autonomous spend demo'), network: z.literal('devnet'),
   selected: autonomousNFTCandidateSchema, listingPriceLamports: z.string().regex(/^[1-9]\d*$/),
   requestedSpendLamports: z.string().regex(/^[1-9]\d*$/),

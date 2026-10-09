@@ -25,7 +25,7 @@ export function VaultStatusChips({ mandate }: { mandate: SerializedMandateView }
   const status = expired ? 'EXPIRED' : mandate.status
   return <div className="vault-chips">
     <span className={`vault-chip vault-chip-${status.toLowerCase()}`}>{status}</span>
-    <span className="vault-chip">{mandate.allowedCategory}</span>
+    <span className="vault-chip">{mandate.allowedCategory === 'ANY' ? 'NFT + RWA' : mandate.allowedCategory}</span>
     <span className="vault-chip vault-chip-plain">Hết hạn {new Date(mandate.expiresAt * 1000).toLocaleString('vi-VN')}</span>
   </div>
 }

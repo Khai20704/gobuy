@@ -1,0 +1,108 @@
+name: Anchor program CI
+
+# Compiles and unit-tests the Na Vault Anchor program on a Linux runner.
+#
+# This workflow never deploys, never upgrades, never signs a transaction and never needs a wallet
+# keypair, a private key, an RPC secret or any repository secret. It only produces build logs and
+# the SBF artifact so a real CPI can be tested later against a controlled validator.
+#
+# Toolchain pinning:
+#   * anchor-lang 1.2.0 declares `rust-version = 1.89`, so the host toolchain is pinned to 1.89.0.
+#   * The Anchor 1.2.0 CLI depends on solana-cli-config/solana-client ^3.0.14, so the Agave
+#     (Solana) CLI is pinned to v3.0.14. `cargo test` runs on the host; `cargo build-sbf` needs
+#     the platform-tools that ship with that release.
+# Do not replace these with floating versions: the SBF std and the program's dependency graph are
+# version-sensitive.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'anchor/**'
+      - '.github/workflows/anchor-ci.yml'
+      - 'scripts/verify-tensor-constants.mjs'
+      - 'scripts/verify-sbf-program-id.mjs'
+  pull_request:
+    paths:
+      - 'anchor/**'
+      - '.github/workflows/anchor-ci.yml'
+      - 'scripts/verify-tensor-constants.mjs'
+      - 'scripts/verify-sbf-program-id.mjs'
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: '1.89.0'
+  AGAVE_VERSION: 'v3.0.14'
+  # Existing Devnet program identity. Read-only here; nothing in this workflow can change it.
+  PROGRAM_ID: 'CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE'
+
+jobs:
+  anchor-program:
+    name: Compile and test the Anchor program (no deploy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+          cargo --version
+
+      - name: Install the Agave (Solana) CLI ${{ env.AGAVE_VERSION }}
+        run: |
+          set -euo pipefail
+          sh -c "$(curl -sSfL "https://release.anza.xyz/${AGAVE_VERSION}/install")"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Show the pinned toolchain versions
+        run: |
+          set -euo pipefail
+          solana --version
+
+      - name: Check the mirrored Tensor constants (Rust, shared client, official SDK)
+        run: node scripts/verify-tensor-constants.mjs
+
+      - name: Compile the program to SBF bytecode
+        run: |
+          set -o pipefail
+          mkdir -p build-logs
+          cargo build-sbf \
+            --manifest-path anchor/programs/gobuy_na/Cargo.toml \
+            --sbf-out-dir anchor/target/deploy 2>&1 | tee build-logs/cargo-build-sbf.log
+
+      - name: Verify the compiled artifact still carries the existing program id
+        run: node scripts/verify-sbf-program-id.mjs anchor/target/deploy/gobuy_na.so "$PROGRAM_ID"
+
+      - name: Record artifact hashes
+        run: |
+          set -euo pipefail
+          ls -l anchor/target/deploy
+          sha256sum anchor/target/deploy/*.so | tee build-logs/sha256.txt
+
+      # The SBF build runs before the host tests deliberately: the compiled artifact is the primary
+      # deliverable, so a failing host test still leaves a .so and its logs to inspect.
+      - name: Run the program unit tests on the host
+        run: |
+          set -o pipefail
+          mkdir -p build-logs
+          cargo test --manifest-path anchor/Cargo.toml --all-targets 2>&1 | tee build-logs/cargo-test.log
+
+      - name: Upload build logs and the SBF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-program-sbf
+          path: |
+            build-logs/**
+            anchor/target/deploy/*.so
+          if-no-files-found: warn
+          retention-days: 30

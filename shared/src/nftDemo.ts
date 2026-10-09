@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { nftCandidateSchema } from './acquisition.js'
+import { purchasePhaseSchema } from './devnetDelivery.js'
 
 export const nftDemoQuoteSchema = z.object({
   sourceAsset: nftCandidateSchema.optional(), simulated: z.boolean().optional(),
@@ -15,6 +16,7 @@ export const nftDemoReplySchema = z.discriminatedUnion('status', [
   z.object({ status: z.enum(['NO_MATCH', 'NEEDS_INPUT']), message: z.string() }),
 ])
 export const nftDemoReceiptSchema = z.object({
+  phase: purchasePhaseSchema.optional(),
   status: z.enum(['CONFIRMED', 'PENDING', 'FAILED', 'NOT_SUBMITTED']), message: z.string(),
   signature: z.string().optional(), asset: z.string().optional(), totalLamports: z.number().optional(),
 })

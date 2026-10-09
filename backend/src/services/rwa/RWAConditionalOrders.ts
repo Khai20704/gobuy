@@ -42,7 +42,7 @@ export class RWAConditionalOrders {
     if (open) return { order: open, duplicate: true }
     const now = new Date()
     const quantity = input.intent.order === 'QUANTITY' && input.intent.quantity
-      ? quantityUnits(input.intent.quantity, input.asset.decimals) : undefined
+      ? quantityUnits(input.intent.quantity, input.asset.decimals!) : undefined
     const order = rwaOrderSchema.parse({
       id: randomUUID(), owner: input.owner, assetMint: input.asset.mint, symbol: input.asset.symbol,
       orderType: input.intent.order ?? 'SPEND',

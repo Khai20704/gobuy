@@ -1,3 +1,4 @@
+import { devnetRpc } from '../delivery/rpc.js'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { Connection, PublicKey } from '@solana/web3.js'
@@ -82,7 +83,7 @@ export type MandateSnapshot = MandateState & { vaultLamports: bigint; status: Re
 export class MandateGuard {
   private readonly connection: Connection
   constructor(private readonly programId: PublicKey, rpcUrl = solanaConfig(process.env).rpcUrl) {
-    this.connection = new Connection(rpcUrl, { commitment: 'confirmed', disableRetryOnRateLimit: true })
+    this.connection = devnetRpc(rpcUrl)
   }
 
   /** `undefined` means the owner has not created a mandate yet. Errors mean the read itself failed. */

@@ -1,3 +1,4 @@
+import { devnetRpc } from '../delivery/rpc.js'
 import { Connection, PublicKey, Transaction, type Keypair, type TransactionInstruction } from '@solana/web3.js'
 import {
   base58Encode, assertDevnet, createMandateInputSchema, formatSol, solanaConfig, solToLamports, spendableVaultLamports,
@@ -31,7 +32,7 @@ export class MandateProgramClient {
 
   constructor(readonly programId: PublicKey, readonly agent: Keypair | undefined,
     readonly settlement: PublicKey | null = settlementAddress(), rpcUrl = solanaConfig(process.env).rpcUrl) {
-    this.connection = new Connection(rpcUrl, { commitment: 'confirmed', disableRetryOnRateLimit: true })
+    this.connection = devnetRpc(rpcUrl)
     this.guard = new MandateGuard(programId, rpcUrl)
   }
 

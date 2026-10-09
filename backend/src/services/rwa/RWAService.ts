@@ -9,6 +9,7 @@ import { RWARegistry } from './RWARegistry.js'
 import { filterApprovedByCategory, rankApprovedCandidates, type PricedCandidate } from './RWARecommendation.js'
 import { JupiterQuoteService } from '../jupiter/JupiterQuoteService.js'
 import { SOL_MINT, USDC_MINT } from '../jupiter/types.js'
+import { DexScreenerPrices } from './DexScreenerPrices.js'
 
 const USDC_DECIMALS = 6
 const SOL_DECIMALS = 9
@@ -46,6 +47,7 @@ export type RWAServiceOptions = {
   /** Reads the owner's on-chain mandate so the policy layer can be re-checked before spending. */
   mandate?: (owner: string) => Promise<MandateView | null>
   resolver?: AssetResolver
+  referencePrices?: Pick<DexScreenerPrices, 'lookup'>
 }
 
 export class RWAService {
@@ -55,6 +57,7 @@ export class RWAService {
   private readonly feeReserve: number
   private readonly mandate: (owner: string) => Promise<MandateView | null>
   private readonly resolver: AssetResolver
+  private readonly referencePrices: Pick<DexScreenerPrices, 'lookup'>
 
   constructor(private readonly registry: RWARegistry, options: RWAServiceOptions = {}) {
     this.quotes = options.quotes ?? new JupiterQuoteService()
@@ -63,6 +66,7 @@ export class RWAService {
     this.feeReserve = options.feeReserve ?? 10000000
     this.mandate = options.mandate ?? (async () => null)
     this.resolver = options.resolver ?? new AssetResolver(registry)
+    this.referencePrices = options.referencePrices ?? new DexScreenerPrices()
   }
 
   /** Canonical classification. The route uses this instead of any frontend keyword list. */
@@ -74,18 +78,27 @@ export class RWAService {
    * With no approved candidate for the category, it says so plainly and never invents a token.
    */
   private async discoverCategory(userId: string, owner: string, id: string, text: string,
-    category: string | undefined, budget: { amount: number; currency: 'SOL' | 'USDC' } | undefined): Promise<RWAReply> {
+    category: string | undefined, budget: { amount: number; currency: 'SOL' | 'USDC' } | undefined, specific?: RWAAsset): Promise<RWAReply> {
     const label = category ? `${category.toLowerCase()} ` : ''
-    const candidates = filterApprovedByCategory(this.registry.list(), category)
+    const candidates = specific ? [specific] : filterApprovedByCategory(this.registry.list(), category)
     if (candidates.length === 0) throw new InputError(`No approved ${label}RWA candidates are currently available.`)
     const priced: PricedCandidate[] = []
     for (const asset of candidates) {
+      try { this.registry.verifyIdentity(asset, owner || undefined) } catch { continue }
       const candidate: PricedCandidate = { asset, priceUsd: await this.observedPriceUsd(asset) }
-      if (budget) {
+      if (asset.mint.includes(':') && budget && candidate.priceUsd) {
+        try {
+        const usd = budget.currency === 'USDC' ? budget.amount
+          : Number((await this.quotes.quote(SOL_MINT, USDC_MINT, String(Math.round(budget.amount * 1e9)))).outAmount) / 1e6
+        const quantity = usd / candidate.priceUsd
+        if (Number.isFinite(quantity) && quantity > 0) candidate.estimatedQuantity = String(quantity)
+        } catch { /* Missing SOL conversion leaves demo budget unconfirmed. */ }
+      } else if (budget && !asset.mint.includes(':')) {
         try {
           const amount = String(Math.round(budget.amount * 10 ** (budget.currency === 'SOL' ? SOL_DECIMALS : USDC_DECIMALS)))
           const quote = await this.quotes.quote(budget.currency === 'SOL' ? SOL_MINT : USDC_MINT, asset.mint, amount)
-          if (BigInt(quote.outAmount) > 0n) candidate.estimatedQuantity = formatAtomic(quote.outAmount, asset.decimals)
+          if (BigInt(quote.outAmount) > 0n) candidate.estimatedQuantity = formatAtomic(quote.outAmount, asset.decimals!)
+          candidate.priceImpactPct = quote.priceImpactPct
         } catch { /* Quote failure does not revoke an approved identity; budget fit stays unknown. */ }
       }
       priced.push(candidate)
@@ -93,15 +106,19 @@ export class RWAService {
     const recommendations = rankApprovedCandidates(priced, budget)
     let intent: RWAIntent | undefined
     try { intent = parseRWAIntent(text, this.registry.list()) } catch { intent = undefined }
-    const network = await this.registry.network()
+    const network = candidates.every(asset => asset.mint.includes(':')) ? 'mainnet' : await this.registry.network()
     const listed = recommendations.slice(0, 5).map(item =>
-      `${item.symbol} (${item.category}${item.priceUsd === null ? '' : ` ≈ ${item.priceUsd} USD/token`})` +
+      `${item.symbol} (${item.mint.includes(':') ? item.mint.split(':')[0] + ' · ' : 'solana · '}${item.category}${item.priceUsd === null ? '' : ` ≈ ${item.priceUsd} USD/token`})` +
       (budget ? item.estimatedQuantity
         ? `: ${budget.amount} ${budget.currency} ≈ ${item.estimatedQuantity} ${item.symbol} (chưa gồm phí mạng)`
         : ': chưa có quote hợp lệ để xác nhận số lượng mua theo ngân sách' : '')).join(', ')
     return this.save(userId, owner, { id, status: 'RECOMMENDED', intent, recommendations,
-      network: network === 'mainnet' ? 'mainnet' : 'devnet', warnings: this.discoveryWarnings(),
+      network: network === 'mainnet' ? 'mainnet' : 'devnet', warnings: [...this.discoveryWarnings(),
+        'Tài sản có khóa mạng:địa chỉ dùng giá Dex Screener để ước tính demo, không phải quote swap. Chỉ chi Devnet SOL; không nhận token thật.'],
       message: `Na tìm thấy ${recommendations.length} RWA đã được duyệt${category ? ` cho nhóm ${category}` : ''}: ${listed}. ` +
+        (recommendations.length === 1 ? 'Chỉ có một ứng viên phù hợp trong danh sách duyệt, chưa có lựa chọn khác để so sánh. '
+          : `Đã xét ${recommendations.length} ứng viên; ${recommendations.filter(item => item.withinBudget).length} có quote theo ngân sách. `) +
+        'Xếp hạng theo khả năng lấy quote và tác động giá nếu có, không dùng giá mỗi token thấp để kết luận đáng mua. ' +
         'Đây là thông tin thị trường để tham khảo, không phải lời khuyên đầu tư và không có giao dịch nào được tạo. ' +
         'Danh tính do canonical mint trong RWA_APPROVED_LIST quyết định; thanh khoản, khối lượng và độ phổ biến chỉ dùng để xếp hạng các ứng viên đã được duyệt.' })
   }
@@ -124,6 +141,21 @@ export class RWAService {
         return await this.discoverCategory(userId, owner, id, text, resolution.category, resolution.budget)
       }
       if (resolution.assetType !== 'RWA' || resolution.blocked || !resolution.approved) {
+        const approved = resolution.symbol ? this.registry.bySymbol(resolution.symbol)
+          .filter(asset => asset.verified && asset.allowedForSwap) : []
+        // An explicit mint that contradicts the canonical mint the approved list endorses for the same
+        // symbol is a substitution attempt: refuse it before any price lookup instead of publishing
+        // reference prices for a token RWA_APPROVED_LIST never approved.
+        if (resolution.mint && approved.length && !approved.some(asset => asset.mint === resolution.mint)) {
+          throw new InputError(`Canonical mint không khớp RWA_APPROVED_LIST: ${resolution.symbol} được duyệt với `
+            + `${approved.map(asset => asset.mint).join(', ')}, không phải ${resolution.mint}. Na không thay thế bằng token khác và chưa chi SOL.`)
+        }
+        const matches = resolution.mint ? [] : approved
+        if (matches.length > 1) return this.save(userId, owner, { id, status: 'NEEDS_INPUT', warnings: [],
+          message: 'Có nhiều deployment được duyệt. Hãy gửi định danh đầy đủ để chọn mạng: ' + matches.map(asset => asset.mint).join(', ') })
+        if (resolution.assetType === 'RWA' && (resolution.mint || resolution.symbol)) {
+          return await this.unverifiedPrices(userId, owner, id, resolution)
+        }
         const symbol = resolution.symbol ?? text.trim().slice(0, 40)
         // An empty list is a missing approval, not a failed check: never imply the asset was judged fake.
         if (resolution.reason === 'registry_empty') {
@@ -136,6 +168,14 @@ export class RWAService {
       }
       intent = parseRWAIntent(text, this.registry.list())
       const asset = resolution.approved
+      if (asset.mint.includes(':')) {
+        this.registry.verifyIdentity(asset, owner || undefined)
+        if (intent.condition || intent.quantity) return this.save(userId, owner, { id, intent, asset,
+          status: 'NEEDS_INPUT', warnings: [], message: 'Demo đa blockchain hiện hỗ trợ ngân sách SOL/USDC; chưa hỗ trợ lệnh điều kiện hoặc số lượng token.' })
+        const result = await this.discoverCategory(userId, owner, id, text, undefined,
+          intent.amount ? { amount: Number(intent.amount) / 10 ** (intent.currency === 'SOL' ? 9 : 6), currency: intent.currency } : undefined, asset)
+        return result
+      }
       // No wallet is needed to identify an asset or read market data; the mandate is the policy
       // layer, and it is re-read at execution time in revalidate().
       if (!intent.amount && !intent.quantity && !intent.condition) {
@@ -186,6 +226,23 @@ export class RWAService {
 
   async list(userId: string): Promise<RWAOrder[]> { return this.orders.list(userId) }
 
+  private async unverifiedPrices(userId: string, owner: string, id: string, resolution: AssetResolution): Promise<RWAReply> {
+    const warning = 'Chưa được duyệt trong RWA_APPROVED_LIST; chưa xác minh là RWA chính thức. Chỉ tham khảo giá, không tạo lệnh, không mua và không chi SOL.'
+    try {
+      const rows = await this.referencePrices.lookup({ mint: resolution.mint, symbol: resolution.symbol })
+      const mints = new Set(rows.map(row => row.chain + ':' + row.mint))
+      return this.save(userId, owner, { id, status: 'NEEDS_INPUT', warnings: [warning], referencePrices: rows.slice(0, 10),
+        message: warning + '\n' + (rows.length
+          ? `Tìm thấy ${mints.size} token khớp tên/địa chỉ trên Dex Screener. Giá USD và link tham khảo nằm bên dưới; đọc lúc ${new Date().toISOString()}.`
+            + (mints.size > 1 ? '\nCó nhiều mint trùng tên. Hãy gửi mint cụ thể để tra giá; Na chưa chọn token nào.' : '')
+            + (rows.length > 10 ? '\nChỉ hiển thị 10 pool đầu; hãy cung cấp mint cụ thể để thu hẹp kết quả.' : '')
+          : 'Dex Screener chưa trả về cặp giao dịch khớp chính xác. Bạn có thể gửi tên/symbol hoặc mint Solana cụ thể.') })
+    } catch {
+      return this.save(userId, owner, { id, status: 'NEEDS_INPUT', warnings: [warning],
+        message: warning + '\nHiện chưa lấy được giá tham khảo từ Dex Screener. Vui lòng thử lại sau.' })
+    }
+  }
+
   /** Re-checks the price condition and, when satisfied, revalidates policy before any execution. */
   private async applyPriceGate(userId: string, order: RWAOrder, asset: RWAAsset, network: 'mainnet' | 'devnet' | 'unknown', owner = ''): Promise<RWAOrder> {
     if (isTerminalStatus(order.status)) return order
@@ -226,7 +283,7 @@ export class RWAService {
 
   private replyFor(order: RWAOrder, asset: RWAAsset, intent: RWAIntent, network: 'mainnet' | 'devnet' | 'unknown'): RWAReply {
     const detail = order.orderType === 'QUANTITY'
-      ? `Mua ${formatAtomic(order.quantity ?? '0', asset.decimals)} ${asset.symbol}, trần tổng chi ` +
+      ? `Mua ${formatAtomic(order.quantity ?? '0', asset.decimals!)} ${asset.symbol}, trần tổng chi ` +
         `${order.maxTotalSpend ? formatAtomic(order.maxTotalSpend, SOL_DECIMALS) : '?'} ${order.maxSpendCurrency ?? ''}`
       : `Chi ${order.spendAmount ? formatAtomic(order.spendAmount, order.spendCurrency === 'SOL' ? SOL_DECIMALS : USDC_DECIMALS) : '?'} ${order.spendCurrency ?? ''} để mua ${asset.symbol}`
     const condition = order.condition
@@ -252,8 +309,15 @@ export class RWAService {
   /** 1 USDC buys `units` of the asset, so the unit price in USD is 1/units. Market data only. */
   private async observedPriceUsd(asset: RWAAsset): Promise<number | null> {
     try {
+      if (asset.mint.includes(':')) {
+        const rows = await this.referencePrices.lookup({ mint: asset.mint })
+        const [chain, address] = asset.mint.split(':')
+        const prices = rows.filter(row => row.chain === chain && row.mint.toLowerCase() === address && row.priceUsd !== null)
+          .map(row => row.priceUsd!).sort((a, b) => a - b)
+        return prices.length ? prices[Math.floor(prices.length / 2)] : null
+      }
       const quote = await this.quotes.quote(USDC_MINT, asset.mint, '1000000')
-      const units = Number(quote.outAmount) / 10 ** asset.decimals
+      const units = Number(quote.outAmount) / 10 ** asset.decimals!
       if (!Number.isFinite(units) || units <= 0) return null
       return Number((1 / units).toFixed(6))
     } catch { return null }
@@ -267,7 +331,7 @@ export class RWAService {
   private async quotePlan(intent: RWAIntent, asset: RWAAsset): Promise<{ plan: RWAReply['quote']; verdict: string } | undefined> {
     const expiresAt = new Date(Date.now() + 20000).toISOString()
     if (intent.order === 'QUANTITY' && intent.quantity) {
-      const units = quantityUnits(intent.quantity, asset.decimals)
+      const units = quantityUnits(intent.quantity, asset.decimals!)
       const quote = await this.quotes.quote(asset.mint, USDC_MINT, units)
       const policyValueLamports = await this.quotes.policyValue(USDC_MINT, quote.outAmount, this.feeReserve)
       const cost = (Number(quote.outAmount) / 10 ** USDC_DECIMALS).toFixed(2)
@@ -285,7 +349,7 @@ export class RWAService {
     const inputMint = intent.currency === 'SOL' ? SOL_MINT : USDC_MINT
     const quote = await this.quotes.quote(inputMint, asset.mint, amount)
     const spendText = formatAtomic(amount, inputMint === SOL_MINT ? SOL_DECIMALS : USDC_DECIMALS)
-    return { verdict: `Chi ${spendText} ${intent.currency ?? 'USDC'} nhận tối đa ${formatAtomic(quote.outAmount, asset.decimals)} ${asset.symbol} theo route hiện tại.`,
+    return { verdict: `Chi ${spendText} ${intent.currency ?? 'USDC'} nhận tối đa ${formatAtomic(quote.outAmount, asset.decimals!)} ${asset.symbol} theo route hiện tại.`,
       plan: { inputMint, outputMint: asset.mint, inAmount: quote.inAmount, outAmount: quote.outAmount,
         minOutput: quote.otherAmountThreshold, slippageBps: quote.slippageBps, expiresAt,
         policyValueLamports: await this.quotes.policyValue(inputMint, amount, this.feeReserve),

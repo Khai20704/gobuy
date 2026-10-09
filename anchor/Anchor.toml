@@ -5,7 +5,7 @@ anchor_version = "1.2.0"
 resolution = true
 skip-lint = false
 
-# No deployment address exists yet. configure-anchor.mjs replaces this sentinel.
+# Existing Devnet deployment; preserve this identity and its funded PDAs.
 [programs.devnet]
 gobuy_na = "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE"
 

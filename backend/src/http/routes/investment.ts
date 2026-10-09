@@ -5,10 +5,15 @@ import { InputError } from '../../schemas/search.js'
 import { originGuard } from '../originGuard.js'
 import { extractNamedCollectionQuery } from '../../services/acquisition/intentLanguage.js'
 import { AssetResolver } from '../../services/rwa/AssetResolver.js'
+import { classifyAssetIntent } from '../../services/rwa/classification.js'
 import { RWARegistry } from '../../services/rwa/RWARegistry.js'
 import { RWAService, type MandateView } from '../../services/rwa/RWAService.js'
 import { requiredMandateClient } from '../../services/mandate/MandateProgramClient.js'
 import { InvestmentTwinService } from '../../services/twin/InvestmentTwinService.js'
+import { WalletAssociationService } from '../../services/acquisition/WalletAssociationService.js'
+import { RWAChatSettlement } from '../../services/rwa/RWAChatSettlement.js'
+import { executeVaultSpend } from '../../services/mandate/autonomousSpend.js'
+import { createNaRequestStore } from '../../persistence/NaRequestStore.js'
 
 /**
  * RWA and investment preferences.
@@ -20,6 +25,18 @@ import { InvestmentTwinService } from '../../services/twin/InvestmentTwinService
 
 export function investmentRoutes(authenticate: RequestHandler, origins: string[]) {
   const router = Router(), twin = new InvestmentTwinService()
+  // Classification is advisory only. Execution services still reload current approvals.
+  let classificationRegistry: { value: Promise<RWARegistry>; expires: number } | undefined
+  const registryForClassification = () => {
+    if (classificationRegistry && classificationRegistry.expires > Date.now()) return classificationRegistry.value
+    const value = RWARegistry.configured()
+    const entry = { value, expires: Number.POSITIVE_INFINITY }
+    classificationRegistry = entry
+    void value.then(() => { entry.expires = Date.now() + 30000 }, () => {
+      if (classificationRegistry === entry) classificationRegistry = undefined
+    })
+    return value
+  }
 
   /** Reads the owner's mandate for the policy re-check. Missing configuration is not an error here. */
   async function mandateOf(owner: string): Promise<MandateView | null> {
@@ -51,11 +68,44 @@ export function investmentRoutes(authenticate: RequestHandler, origins: string[]
   // Origin decides, never Sec-Fetch-Site.
   router.use(originGuard(origins, response => response.sendStatus(403)), authenticate)
   router.get('/config', (_req, res) => res.json({ rwaNetwork: 'mainnet', executionEnabled: false }))
+  router.post('/rwa/chat-settle', async (req, res) => {
+    const input = body(z.object({ owner: walletAddressSchema, requestId: z.uuid(), text: z.string().trim().min(1).max(2000) }).strict(), req.body)
+    const userId = res.locals.identity.uid
+    await new WalletAssociationService().require(userId, input.owner)
+    const history = createNaRequestStore()
+    // Retry updates the same request; it does not add another history entry.
+    try { await history.create(userId, input.requestId, input.text) }
+    catch { await history.update(userId, input.requestId, { status: 'PENDING' }) }
+    const registry = await RWARegistry.configured()
+    const settlement = new RWAChatSettlement(registry, new RWAService(registry),
+      request => executeVaultSpend(requiredMandateClient(), request), async owner => {
+        const mandate = await requiredMandateClient().read(owner)
+        if (!mandate) throw new InputError('Chưa có mandate của ví này trên Devnet.')
+        // Include creation time: a closed PDA can be recreated at the same address.
+        return mandate.address + ':' + mandate.createdAt
+      })
+    try {
+      const reply = await settlement.run(userId, input)
+      await history.update(userId, input.requestId, { response: reply.message, orderId: input.requestId,
+        phase: reply.phase, title: 'RWA · tài sản thử nghiệm Devnet', ...(reply.signature ? { signature: reply.signature } : {}),
+        status: reply.status === 'CONFIRMED' || reply.status === 'PENDING' || reply.status === 'FAILED' ? reply.status
+          : reply.status === 'NEEDS_INPUT' ? 'NEEDS_INPUT' : 'NOT_SUBMITTED' })
+      res.json(reply)
+    } catch (error) {
+      if (error instanceof InputError) {
+        await history.update(userId, input.requestId, { status: 'NOT_SUBMITTED', response: error.message })
+        res.json({ id: input.requestId, status: 'REJECTED', message: error.message, network: 'devnet', warnings: [] })
+        return
+      }
+      // Keep the client request ID after uncertain execution/history failures.
+      await history.update(userId, input.requestId, { status: 'PENDING', response: error instanceof Error ? error.message : 'Chưa xác định kết quả.' }).catch(() => {})
+      throw error
+    }
+  })
   // Single source of truth for NFT vs RWA vs UNKNOWN. No frontend keyword list decides this.
   router.post('/asset/resolve', async (req, res) => {
     const input = body(textBody, req.body)
-    const registry = await RWARegistry.configured()
-    const resolution = new AssetResolver(registry, nftEvidence).resolve(input.text)
+    const resolution = await classifyAssetIntent(input.text, nftEvidence, registryForClassification)
     res.json({ assetType: resolution.assetType, reason: resolution.reason, symbol: resolution.symbol ?? null,
       mint: resolution.mint ?? null, blocked: resolution.blocked, category: resolution.category ?? null })
   })

@@ -76,7 +76,7 @@ export class AssetResolver {
     if (rwaFlavoured || sameSymbol || symbolWithMoney || xStockSymbol) {
       // An empty list is an operator problem, not a counterfeit: say so instead of implying the
       // requested asset failed an authenticity check it was never able to run.
-      return { assetType: 'RWA', symbol, blocked: true,
+      return { assetType: 'RWA', symbol, mint: intent?.mint, blocked: true,
         reason: assets.length === 0 ? 'registry_empty'
           : sameSymbol ? 'symbol_not_approved' : symbolWithMoney || xStockSymbol ? 'unapproved_symbol' : 'rwa_not_in_registry' }
     }

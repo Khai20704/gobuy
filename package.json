@@ -17,6 +17,8 @@
     "lint": "npm run build -w shared && npm run lint --workspaces --if-present && tsc -p tsconfig.tests.json",
     "test": "npm run build -w shared && npm run build -w @gobuy/tensor-adapter && node --import tsx --test shared/tests/*.test.ts backend/tests/*.test.ts frontend/tests/*.test.ts extension/tests/*.test.ts",
     "test:anchor": "cargo test --manifest-path anchor/Cargo.toml",
+    "verify:tensor-constants": "node scripts/verify-tensor-constants.mjs",
+    "typecheck:anchor-rules": "rustc --edition 2021 --crate-type bin --emit=metadata -o .tmp-anchor-rules.rmeta anchor/host-typecheck/main.rs",
     "anchor:configure": "node scripts/configure-anchor.mjs",
     "anchor:idl": "node scripts/copy-idl.mjs",
     "test:e2e": "playwright test",

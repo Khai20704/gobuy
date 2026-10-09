@@ -54,7 +54,8 @@ export function extractRWASymbol(text: string, assets: RWAAsset[]): string | und
 
 /** True when the wording itself is RWA-flavoured, or the text names an approved asset. */
 export function isRWARequest(text: string, assets: RWAAsset[] = []): boolean {
-  if (assets.some(asset => extractRWASymbol(text, assets)?.toLowerCase() === asset.symbol.toLowerCase())) return true
+  const symbol = extractRWASymbol(text, assets)?.toLowerCase()
+  if (symbol && assets.some(asset => symbol === asset.symbol.toLowerCase())) return true
   return /\b(rwa|tokenized|token hoa|vang|gold|treasury|trai phieu|equity|co phieu|stock|etf|commodity|hang hoa)\b/.test(normalizeIntentText(text))
 }
 
@@ -87,7 +88,8 @@ export function parseRWAIntent(text: string, assets: RWAAsset[]): RWAIntent {
   const hint = detectRWACategory(text)
   const subtype: RWACategory | undefined = hint?.subtype
   const symbol = extractRWASymbol(text, assets)
-  const mints = text.match(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g) ?? []
+  const qualified = text.match(/\b(?:ethereum|base|arbitrum|bsc|polygon|avalanche|gnosis|mantle|ink):0x[0-9a-fA-F]{40}\b/g)
+  const mints = qualified?.map(value => value.toLowerCase()) ?? text.match(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g) ?? []
   if (mints.length > 1 || /\b(nan|infinity)\b/.test(value)) throw new InputError('Nêu một số tiền dương và một asset RWA cụ thể.')
   // A request naming no symbol and no mint is a CATEGORY_DISCOVERY, never a specific asset. The raw
   // sentence is never used as an identifier, so "Tìm một RWA công nghệ" can never become a mint.
@@ -104,9 +106,9 @@ export function parseRWAIntent(text: string, assets: RWAAsset[]): RWAIntent {
   const symbolPattern = symbol ? symbol.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : undefined
   const quantityMatch = symbolPattern ? value.match(new RegExp(NUMBER + '\\s*' + symbolPattern + '\\b')) : null
   // 3. Order B's money ceiling: "<qty> ASSET ... duoi N SOL|USDC".
-  const capMatch = quantityMatch ? value.match(new RegExp(COMPARISON + '\\s*' + NUMBER + '\\s*(usdc|sol)\\b')) : null
+  const capMatch = quantityMatch ? value.match(new RegExp(COMPARISON + '\\s*' + NUMBER + '\\s*(usdc|usd|sol)\\b')) : null
   // 4. Money to spend: "100 USDC" or a "$100" that is not the price trigger.
-  const spendMatch = value.match(new RegExp(NUMBER + '\\s*(usdc|sol)\\b'))
+  const spendMatch = value.match(new RegExp(NUMBER + '\\s*(usdc|usd|sol)\\b'))
   const priceDollarIndex = priceMatch && priceMatch[0].includes('$') ? priceMatch.index! + priceMatch[0].lastIndexOf('$') : -1
   const dollarSpend = [...value.matchAll(new RegExp('\\$\\s*' + NUMBER, 'g'))]
     .find(entry => entry.index !== priceDollarIndex)

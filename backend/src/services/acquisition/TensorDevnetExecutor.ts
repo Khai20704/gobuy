@@ -1,3 +1,4 @@
+import { devnetRpc } from '../delivery/rpc.js'
 import { NFTPurchaseError } from '../../nft/errors.js'
 import { HeliusNFTProvider } from '../../nft/helius/HeliusNFTProvider.js'
 import { TensorMarketplaceClient } from '../../nft/tensor/TensorMarketplaceClient.js'
@@ -38,7 +39,7 @@ export class TensorDevnetExecutor implements ExecutionEngine {
   constructor(store?: OrderStore, rpcUrl = this.config.rpcUrl,
     private readonly ordersDirectory = resolve(process.env.TENSOR_ORDER_DATA_DIR || '.data/tensor-orders')) {
     if (rpcUrl !== this.config.rpcUrl) throw new Error('Tensor RPC must match SOLANA_RPC_URL.')
-    this.connection = new Connection(rpcUrl, { commitment: 'confirmed', disableRetryOnRateLimit: true })
+    this.connection = devnetRpc(rpcUrl)
     this.store = store ?? (storageMode() === 'file' ? new FileOrderStore(this.ordersDirectory) : new MongoOrderStore())
     acquisitionConfig()
   }

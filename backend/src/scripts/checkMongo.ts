@@ -1,16 +1,16 @@
-import { MongoClient } from 'mongodb'
-import { diagnoseMongoFailure } from '../persistence/mongoDiagnostics.js'
+import { MongoDatabase, MongoUnavailableError } from '../persistence/mongo.js'
 
-// Read-only connectivity probe. No ensureIndexes, collection reads, writes or raw error logging.
-let client: MongoClient | undefined
+// Read-only connectivity probe. It uses the same connection path as the API, including the
+// DNS-over-HTTPS SRV fallback, but skips index initialization, collection reads and writes.
+const database = new MongoDatabase({ ...process.env, MONGO_SKIP_INDEX_INIT: 'true' })
 try {
-  if (!process.env.MONGODB_URI?.trim()) throw new Error('missing-config')
-  client = new MongoClient(process.env.MONGODB_URI, { maxPoolSize: 1, serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 })
-  await client.connect()
-  await client.db(process.env.MONGODB_DB_NAME || 'gobuy').command({ ping: 1 })
+  const db = await database.get()
+  await db.command({ ping: 1 })
   console.log('MongoDB connection and ping succeeded. Application index permissions have not been tested.')
 } catch (error) {
-  if (!process.env.MONGODB_URI?.trim()) console.error('MONGODB_URI is missing in backend/.env.')
-  else console.error('[MongoDB check]', JSON.stringify(diagnoseMongoFailure(error)))
+  const reason = error instanceof MongoUnavailableError
+    ? 'connection failed; see the [MongoDB] diagnostic logged above'
+    : error instanceof Error ? error.message : 'connection failed'
+  console.error('[MongoDB check]', reason)
   process.exitCode = 1
-} finally { await client?.close().catch(() => {}) }
+} finally { await database.close() }

@@ -13,9 +13,11 @@ import { researchRoutes } from './http/routes/research.js'
 import { env } from './config/env.js'
 import { nftDemoRoutes } from './http/routes/nftDemo.js'
 import { acquisitionRoutes } from './http/routes/acquisition.js'
+import { publicDemoMetadataRoutes } from './http/routes/publicDemoMetadata.js'
 import { LLMUnavailableError, LLMContextError, LLMRefusalError } from './ai/errors/classifyProviderError.js'
 import { MongoUnavailableError } from './persistence/mongo.js'
 import { mandateRoutes } from './http/routes/mandate.js'
+import { nftPurchaseRoutes } from './http/routes/nftPurchase.js'
 import { investmentRoutes } from './http/routes/investment.js'
 
 export function createApp(service = new DiscoveryService(new MockLLMProvider(), new MockMarketplaceAdapter()), research = createResearchService(), accounts = createAccounts()) {
@@ -44,8 +46,12 @@ export function createApp(service = new DiscoveryService(new MockLLMProvider(), 
   app.use(express.json({ limit: '3mb', strict: true }))
   app.get('/api/health', (_request, response) => response.json({ status: 'ok', mode: 'demo', cluster: 'devnet' }))
   app.use('/api/account', accounts.router)
+  app.use('/api/acquisition', publicDemoMetadataRoutes())
   app.use('/api/acquisition', acquisitionRoutes(accounts.requireAuthenticated, accounts.requireReady, env.APP_ORIGINS))
   app.use('/api/mandate', mandateRoutes(accounts.requireAuthenticated, env.APP_ORIGINS))
+  // Genuine original-NFT purchases. Separate from the DEMO delivery route on purpose: nothing here
+  // mints a GoBuy DEMO NFT, and the purchase endpoint stays inert until explicitly enabled.
+  app.use('/api/nft-purchases', nftPurchaseRoutes(accounts.requireAuthenticated, env.APP_ORIGINS))
   app.use('/api/investment', investmentRoutes(accounts.requireAuthenticated, env.APP_ORIGINS))
   app.use('/api/nft-demo', nftDemoRoutes(undefined, env.APP_ORIGINS, accounts.requireReady))
   app.use('/api/proposals', proposalRoutes(service))

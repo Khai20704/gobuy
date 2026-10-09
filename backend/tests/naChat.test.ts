@@ -54,6 +54,24 @@ test('Devnet explanation distinguishes Tensor purchases from simulations and req
   assert.doesNotMatch(reply.message, /đang mô phỏng/)
 })
 
+test('restored history seeds the same account chat without overwriting later conversation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'na-restore-'))
+  let received: string[] = []
+  const service = new NaChatService({ isConfigured: () => true, generate: async request => {
+    received = request.messages.map(item => item.content)
+    throw new Error('offline')
+  } }, new FileAssetStore(root))
+  await service.restore('alice', 'thread', 'NFT là gì?', 'Saved answer')
+  await service.reply('alice', 'Floor price là gì?', 'thread')
+  assert.ok(received.includes('Saved answer'))
+  await service.restore('alice', 'thread', 'Replace history', 'Wrong answer')
+  await service.reply('alice', 'NFT là gì?', 'thread')
+  assert.ok(received.includes('Floor price là gì?'))
+  assert.ok(!received.includes('Wrong answer'))
+  await service.reply('bob', 'NFT là gì?', 'thread')
+  assert.equal(received.length, 1)
+})
+
 test('marketplace rate limiting explains recovery and retry keeps collection and budget without buying', async () => {
   const root = await mkdtemp(join(tmpdir(), 'na-retry-'))
   const provider = { name: 'Magic Eden', search: async () => { throw new ProviderRequestError(429) }, refresh: async () => undefined }

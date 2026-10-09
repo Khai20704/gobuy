@@ -35,6 +35,21 @@ Mongo is the default. On initialization failure the backend still listens in deg
 
 Run `npm run check:mongo -w backend` from `gobuy` for a read-only connection/ping check using `backend/.env`. It does not create indexes or read application documents. Initialization logs now distinguish the `connect` and `indexes` stages and report safe categories (TLS, DNS, authentication, permissions, index conflict) without printing driver messages or credentials. A TLS failure occurs before database authentication; check the current outbound IP in Atlas Network Access first, then cluster availability and VPN/TLS inspection. Do not disable certificate verification to work around it.
 
+## SRV resolution failures (EBADRESP)
+
+`mongodb+srv://` requires an SRV lookup (`_mongodb._tcp.<cluster>`) before the driver contacts any host. Some networks — notably ISP resolvers that intercept port 53 — answer that query with a malformed packet, which c-ares reports as `EBADRESP`. The driver then fails during `connect` and never reaches Atlas at all. This is a resolver problem, not an Atlas, credentials or IP Access List problem, and it can appear after a network, router or VPN change even though it worked before. The log category is now `DNS_FAILED`; it was previously reported as `UNKNOWN`.
+
+When the first attempt fails with a resolver error on a `mongodb+srv://` URI, the backend resolves the SRV and TXT records over **DNS-over-HTTPS** (Cloudflare, then Google), rebuilds the URI as a direct `mongodb://` seed list including the `authSource`/`replicaSet` options published in the cluster TXT record, enables TLS and retries once. Ordinary A/AAAA resolution and the driver's own SRV path are unchanged, so a healthy network pays nothing extra. Only resolver errors (`EBADRESP`, `ENOTFOUND`, `EAI_AGAIN`, `ESERVFAIL`, `ENODATA`, `ETIMEOUT`, `EREFUSED`, `EFORMERR`, `ENOTIMP`) trigger the retry: authentication, TLS, IP allow list and index failures never do, and the retry never runs for a plain `mongodb://` URI.
+
+```dotenv
+# Disable the retry (leave the system resolver as the only path):
+MONGODB_SRV_DOH_FALLBACK=false
+# Custom JSON DoH endpoints, comma-separated. Default: Cloudflare then Google.
+MONGODB_SRV_DOH_URL=https://cloudflare-dns.com/dns-query
+```
+
+Diagnose with `npm run check:mongo -w backend`. It uses the same connection path as the API and prints `MongoDB connection and ping succeeded.` when the fallback recovered; a `srv-fallback` line before that is expected and harmless. If DNS-over-HTTPS is blocked as well, copy the direct connection string from Atlas (Connect → Drivers, the `mongodb://` variant listing `<shard>.mongodb.net:27017` seed hosts) into `MONGODB_URI`; that bypasses SRV entirely. Never widen the Atlas IP Access List or disable certificate verification to compensate — `EBADRESP` is decided before authentication and before any server is selected.
+
 ## Collections and indexes
 
 | Collection | Contents | Unique index |

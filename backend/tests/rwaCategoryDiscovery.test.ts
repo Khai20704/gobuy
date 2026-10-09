@@ -11,6 +11,9 @@ import { parseRWAIntent } from '../src/services/rwa/RWAIntent.ts'
 import { MAINNET_GENESIS, RWARegistry } from '../src/services/rwa/RWARegistry.ts'
 import { RWAService, type SavedRWA } from '../src/services/rwa/RWAService.ts'
 import { rankApprovedCandidates } from '../src/services/rwa/RWARecommendation.ts'
+import { DexScreenerPrices } from '../src/services/rwa/DexScreenerPrices.js'
+import { RWAChatSettlement, type RWAChatPlan } from '../src/services/rwa/RWAChatSettlement.js'
+import { rwaReplySchema } from '@gobuy/shared'
 
 /**
  * SPECIFIC_ASSET vs CATEGORY_DISCOVERY.
@@ -26,6 +29,95 @@ const TSLAX_MINT = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
 const GOLDX_MINT = 'So11111111111111111111111111111111111111112'
 const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
 const NOW = new Date().toISOString()
+
+test('approved Ethereum RWA uses issuer identity and exact market address for Devnet demo only', async () => {
+  const address = '0x' + 'a'.repeat(40)
+  const asset: RWAAsset = { ...nvdax, mint: `ethereum:${address}`, symbol: 'FOOx', decimals: undefined }
+  const registry = new RWARegistry([asset], { getGenesisHash: async () => assert.fail('no Solana identity lookup'),
+    getParsedAccountInfo: async () => assert.fail('no SPL lookup') } as unknown as Connection)
+  const service = new RWAService(registry, { cached: new MemoryStore<SavedRWA>(), referencePrices: {
+    lookup: async ({ mint }) => {
+      assert.equal(mint, asset.mint)
+      return [{ chain: 'ethereum', mint: address, symbol: 'FOOx', pair: 'p', priceUsd: 10, url: 'https://dexscreener.com/ethereum/p' }]
+    },
+  } })
+  let spent = 0
+  const settlement = new RWAChatSettlement(registry, service, async input => {
+    spent++; assert.equal(input.amountLamports, 1000000000n)
+    return { status: 'CONFIRMED', message: 'Demo', signature: 'sig' } as never
+  }, async () => 'mandate', { quote: async (input: string, output: string) => {
+    assert.ok(!input.includes(':') && !output.includes(':'))
+    return { outAmount: '1000000000' }
+  } } as unknown as JupiterQuoteService, new MemoryStore<RWAChatPlan>(), { deliver: async (_user, input) => ({
+    ...input, quantity: '10', network: 'devnet', simulated: true, phase: 'COMPLETED', ownership: 'verified', message: 'Fixture delivery',
+  }) })
+  const text = `Buy RWA ethereum:${address} 100 USDC`
+  const reply = await settlement.run('u', { text, requestId: 'r', owner: 'owner' })
+  assert.equal(reply.status, 'CONFIRMED'); assert.equal(spent, 1)
+  assert.equal(reply.quote, undefined)
+  assert.equal(reply.recommendations?.[0].estimatedQuantity, '10')
+  await settlement.run('u', { text, requestId: 'r', owner: 'owner' })
+  assert.equal(spent, 1)
+  const duplicate = new RWARegistry([asset, { ...asset, mint: `base:${address}` }])
+  assert.throws(() => duplicate.resolve(parseRWAIntent('Buy FOOx 100 USDC', duplicate.list())), /nhiều/)
+  assert.equal(duplicate.resolve(parseRWAIntent(text, duplicate.list())).mint, asset.mint)
+})
+
+test('Dex Screener retains other chains and filters quote-side matches, fuzzy symbols and malformed prices', async () => {
+  const pair = { chainId: 'solana', pairAddress: 'pool', baseToken: { address: NVDAX_MINT, symbol: 'FOOx', name: 'Foo' }, priceUsd: '12.5' }
+  const market = new DexScreenerPrices((async url => {
+    assert.ok(String(url).endsWith('search?q=FOOx'))
+    return Response.json({ pairs: [pair, { ...pair, chainId: 'ethereum' },
+      { ...pair, baseToken: { ...pair.baseToken, symbol: 'FAKEFOOx' }, quoteToken: pair.baseToken },
+      { ...pair, pairAddress: 'pool2', priceUsd: 'Infinity' },
+      { ...pair, baseToken: { ...pair.baseToken, address: TSLAX_MINT } }] })
+  }) as typeof fetch)
+  const rows = await market.lookup({ symbol: 'FOOx' })
+  assert.equal(rows.length, 4)
+  assert.equal(new Set(rows.map(row => row.mint)).size, 2)
+  assert.equal(rows.find(row => row.pair === 'pool2')?.priceUsd, null)
+})
+
+test('mint lookup uses exact base mint and never guesses from a quote-token match', async () => {
+  const market = new DexScreenerPrices((async url => {
+    assert.equal(String(url), `https://api.dexscreener.com/token-pairs/v1/solana/${NVDAX_MINT}`)
+    return Response.json([{ chainId: 'solana', pairAddress: 'pool', priceUsd: '123',
+      baseToken: { address: TSLAX_MINT, symbol: 'OTHER', name: 'Other' }, quoteToken: { address: NVDAX_MINT } }])
+  }) as typeof fetch)
+  assert.deepEqual(await market.lookup({ mint: NVDAX_MINT }), [])
+})
+
+test('unknown RWA BUY returns reference prices without orders, approval or vault spend', async () => {
+  const registry = registryWith([])
+  const service = new RWAService(registry, { cached: new MemoryStore<SavedRWA>(), referencePrices: {
+    lookup: async query => {
+      assert.equal(query.symbol?.toLowerCase(), 'foox')
+      return [NVDAX_MINT, TSLAX_MINT].map(mint => ({ mint, symbol: 'FOOx', pair: 'pool', priceUsd: 12.5, chain: 'solana', url: 'https://dexscreener.com/solana/pool' }))
+    },
+  } })
+  const settlement = new RWAChatSettlement(registry, service, async () => assert.fail('must not spend'),
+    async () => assert.fail('must not read mandate'), undefined, new MemoryStore<RWAChatPlan>())
+  const reply = await settlement.run('u', { owner: 'owner', requestId: 'test', text: 'Buy RWA FOOx 100 USDC' })
+  assert.equal(reply.status, 'NEEDS_INPUT')
+  assert.equal(reply.referencePrices?.[0].priceUsd, 12.5)
+  assert.match(reply.message, /nhiều mint/)
+  for (const field of ['asset', 'quote', 'order', 'recommendations', 'signature'] as const) assert.equal(reply[field], undefined)
+  assert.equal(registry.list().length, 0)
+  rwaReplySchema.parse(reply)
+})
+
+test('reference price outage and no matches stay unverified; categories never call Dex Screener', async () => {
+  for (const lookup of [async () => [], async () => { throw new Error('429') }]) {
+    const service = new RWAService(registryWith([]), { cached: new MemoryStore<SavedRWA>(), referencePrices: { lookup } })
+    const reply = await service.discover('u', 'Find RWA FOOx')
+    assert.equal(reply.status, 'NEEDS_INPUT')
+    assert.match(reply.message, /Chưa được duyệt/)
+  }
+  const service = new RWAService(registryWith([]), { cached: new MemoryStore<SavedRWA>(), referencePrices: {
+    lookup: async () => assert.fail('category must not query Dex Screener'),
+  } })
+  assert.equal((await service.discover('u', 'Find RWA technology under 100 USDC')).status, 'REJECTED')
+})
 
 const rwa = (mint: string, symbol: string, name: string, underlying: string, category: RWAAsset['category']): RWAAsset =>
   ({ mint, symbol, name, issuer: 'Backed Assets', category, underlying, decimals: 6, verified: true,

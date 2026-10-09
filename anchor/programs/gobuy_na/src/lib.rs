@@ -10,15 +10,26 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{transfer, Transfer};
 
+// `alloc` is not part of the Rust extern prelude (`core` and `std` are), yet the pure rule
+// modules return `alloc::vec::Vec<u8>` for instruction data. Declaring the crate once here puts
+// the `alloc` path in scope for every module of this program.
+extern crate alloc;
+
 pub mod mandate_rules;
+pub mod nft_purchase;
+pub mod nft_purchase_rules;
 
 use mandate_rules::{
     authorize_owner, authorize_spend, authorize_vault, refundable_lamports, validate_create,
     MandatePolicy, Rejection,
 };
+use nft_purchase::{
+    BuyNftFromMandate, CloseNftPurchaseAuthorization, CreateNftPurchaseAuthorization,
+};
+use nft_purchase_rules::PurchaseRejection;
 
-// Undeployed sentinel, NOT a GoBuy deployment ID. Replace via npm run anchor:configure.
-declare_id!("CHjdqooB7TUSSJoZoboFP5TtdCspotkVPqoshbr5zE");
+// Existing Devnet deployment identity. Source-to-deployed-binary provenance is not yet verified.
+declare_id!("CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE");
 
 /// Seeds for the mandate state account: ["mandate", owner].
 pub const MANDATE_SEED: &[u8] = b"mandate";
@@ -26,6 +37,10 @@ pub const MANDATE_SEED: &[u8] = b"mandate";
 pub const VAULT_SEED: &[u8] = b"vault";
 /// Seeds for one spend receipt: ["spend", mandate, spend_id].
 pub const SPEND_SEED: &[u8] = b"spend";
+/// Seeds for the versioned original-NFT purchase authorization: ["nft-auth", mandate].
+pub const NFT_AUTH_SEED: &[u8] = nft_purchase_rules::NFT_AUTH_SEED;
+/// Seeds for one immutable genuine purchase receipt: ["purchase", mandate, order_id].
+pub const PURCHASE_SEED: &[u8] = nft_purchase_rules::PURCHASE_SEED;
 
 #[program]
 pub mod gobuy_na {
@@ -265,6 +280,45 @@ pub mod gobuy_na {
         });
         Ok(())
     }
+
+    /// Owner-signed approval of a versioned original-NFT purchase policy. This is the explicit
+    /// approval the settlement mandate never carried: it names the marketplace, executor,
+    /// recipient and the maximum total SOL the vault may ever be debited under it.
+    pub fn create_nft_purchase_authorization(
+        ctx: Context<CreateNftPurchaseAuthorization>,
+        max_total_debit_lamports: u64,
+        expires_at: i64,
+        marketplace: Pubkey,
+        executor: Pubkey,
+        recipient: Pubkey,
+    ) -> Result<()> {
+        nft_purchase::create_nft_purchase_authorization(
+            ctx,
+            max_total_debit_lamports,
+            expires_at,
+            marketplace,
+            executor,
+            recipient,
+        )
+    }
+
+    /// Owner-only revocation of the purchase authorization.
+    pub fn close_nft_purchase_authorization(
+        ctx: Context<CloseNftPurchaseAuthorization>,
+    ) -> Result<()> {
+        nft_purchase::close_nft_purchase_authorization(ctx)
+    }
+
+    /// Genuine Devnet NFT purchase. The vault PDA pays Tensor through a `buy_legacy` CPI; the
+    /// original NFT is delivered to the mandate owner's associated token account.
+    pub fn buy_nft_from_mandate(
+        ctx: Context<BuyNftFromMandate>,
+        order_id: [u8; 16],
+        expected_mint: Pubkey,
+        max_price_lamports: u64,
+    ) -> Result<()> {
+        nft_purchase::buy_nft_from_mandate(ctx, order_id, expected_mint, max_price_lamports)
+    }
 }
 
 #[derive(Accounts)]
@@ -464,6 +518,59 @@ pub enum NaError {
     MandateStillActive,
     #[msg("Unexpected transaction failure")]
     TransactionFailed,
+    #[msg("The NFT purchase authorization is not active")]
+    PurchaseAuthorizationNotActive,
+    #[msg("The NFT purchase authorization has expired")]
+    PurchaseAuthorizationExpired,
+    #[msg("The NFT purchase authorization does not match this mandate, owner, executor or marketplace")]
+    PurchaseAuthorizationMismatch,
+    #[msg("The purchase exceeds the authorized NFT purchase budget")]
+    PurchaseAuthorizationBudgetExceeded,
+    #[msg("The purchase order identity is missing")]
+    InvalidPurchaseOrder,
+    #[msg("The listing does not match the requested mint")]
+    InvalidListing,
+    #[msg("The marketplace program is not the verified Tensor program")]
+    InvalidMarketplaceProgram,
+    #[msg("The NFT buyer is not the mandate owner")]
+    InvalidBuyer,
+    #[msg("The NFT destination is not the owner's associated token account")]
+    InvalidBuyerTokenAccount,
+    #[msg("The Tensor BuyLegacy account list is invalid")]
+    InvalidTensorAccounts,
+    #[msg("The purchase price is not valid")]
+    InvalidPrice,
+    #[msg("The NFT was not delivered to the buyer")]
+    PurchaseNotDelivered,
+    #[msg("The vault debit exceeds the authorized purchase amount")]
+    VaultDebitExceeded,
+    #[msg("Only classic SPL Token non-fungible assets are supported")]
+    UnsupportedTokenStandard,
+}
+
+/// Purchase rejections map onto the appended error variants in the same order, so their numeric
+/// codes (12..=25) stay stable and the shared client union can name every refusal exactly.
+impl From<PurchaseRejection> for NaError {
+    fn from(rejection: PurchaseRejection) -> Self {
+        match rejection {
+            PurchaseRejection::AuthorizationNotActive => NaError::PurchaseAuthorizationNotActive,
+            PurchaseRejection::AuthorizationExpired => NaError::PurchaseAuthorizationExpired,
+            PurchaseRejection::AuthorizationMismatch => NaError::PurchaseAuthorizationMismatch,
+            PurchaseRejection::AuthorizationBudgetExceeded => {
+                NaError::PurchaseAuthorizationBudgetExceeded
+            }
+            PurchaseRejection::InvalidPurchaseOrder => NaError::InvalidPurchaseOrder,
+            PurchaseRejection::InvalidListing => NaError::InvalidListing,
+            PurchaseRejection::InvalidMarketplaceProgram => NaError::InvalidMarketplaceProgram,
+            PurchaseRejection::InvalidBuyer => NaError::InvalidBuyer,
+            PurchaseRejection::InvalidBuyerTokenAccount => NaError::InvalidBuyerTokenAccount,
+            PurchaseRejection::InvalidTensorAccounts => NaError::InvalidTensorAccounts,
+            PurchaseRejection::InvalidPrice => NaError::InvalidPrice,
+            PurchaseRejection::PurchaseNotDelivered => NaError::PurchaseNotDelivered,
+            PurchaseRejection::VaultDebitExceeded => NaError::VaultDebitExceeded,
+            PurchaseRejection::UnsupportedTokenStandard => NaError::UnsupportedTokenStandard,
+        }
+    }
 }
 
 impl From<Rejection> for NaError {

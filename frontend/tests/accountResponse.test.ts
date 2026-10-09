@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { loadAccountProfile, readAccountResponse } from '../src/features/account/response.ts'
+import { accountTransportMessage } from '../src/features/account/transportError.ts'
+
+test('browser timeout code is not misreported as Firebase configuration failure', async () => {
+  const timeout = new DOMException('signal timed out', 'TimeoutError')
+  assert.equal(timeout.code, 23)
+  assert.match(accountTransportMessage(timeout)!, /15 giây/)
+  assert.equal(accountTransportMessage({ code: 'auth/invalid-credential' }), undefined)
+  let calls = 0
+  await assert.rejects(loadAccountProfile(async () => { calls++; throw timeout }, () => true, async () => {}), /timed out/)
+  assert.equal(calls, 2)
+})
 
 test('account responses explain empty proxy failures and invalid success bodies', async () => {
   for (const response of [new Response('', { status: 500 }), new Response('<html>Bad gateway</html>', { status: 502 }), Response.json(null), Response.json({})]) {

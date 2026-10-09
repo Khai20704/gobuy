@@ -6,6 +6,11 @@ import { normalizeIntentText } from './intentLanguage.js'
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string }
 export class NaChatService {
+  async restore(userId: string, conversationId: string, prompt: string, response?: string) {
+    await this.history.put(userId, conversationId, { messages: [
+      { role: 'user', content: prompt }, ...(response ? [{ role: 'assistant' as const, content: response }] : []),
+    ] }, true)
+  }
   constructor(private readonly router?: Pick<LLMRouter, 'generate' | 'isConfigured'>,
     private readonly history: AssetStore<{ messages: ChatMessage[] }> = assetStore('naChatHistory')) {}
 

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { walletAddressSchema } from './acquisition.js'
+import { explainNftPurchaseRejection } from './nftPurchaseAuthorization.js'
 
 /**
  * Shared contract for the Na Vault spending mandate.
@@ -39,7 +40,13 @@ export function mandateCategoryAllows(allowed: MandateCategory, requested: Exclu
 /** Every way a spend or an owner action can be refused, in the program's own vocabulary. */
 export const MANDATE_REJECTIONS = ['MandateNotActive', 'MandateExpired', 'BudgetExceeded', 'InsufficientVaultBalance',
   'InvalidOwner', 'InvalidVault', 'InvalidCategory', 'InvalidAmount', 'AmountOverflow', 'InvalidSpendId',
-  'MandateStillActive', 'TransactionFailed'] as const
+  'MandateStillActive', 'TransactionFailed',
+  // Genuine original-NFT purchase rejections, appended so codes 12..=25 stay stable and match the
+  // appended `NaError` variants in the Anchor program.
+  'PurchaseAuthorizationNotActive', 'PurchaseAuthorizationExpired', 'PurchaseAuthorizationMismatch',
+  'PurchaseAuthorizationBudgetExceeded', 'InvalidPurchaseOrder', 'InvalidListing', 'InvalidMarketplaceProgram',
+  'InvalidBuyer', 'InvalidBuyerTokenAccount', 'InvalidTensorAccounts', 'InvalidPrice', 'PurchaseNotDelivered',
+  'VaultDebitExceeded', 'UnsupportedTokenStandard'] as const
 export type MandateRejection = typeof MANDATE_REJECTIONS[number]
 
 /**
@@ -144,11 +151,18 @@ export function formatSol(lamports: bigint, decimals = 3): string {
   return (negative ? '-' : '') + whole.toString() + (decimals > 0 ? '.' + fraction : '')
 }
 
-/** Validation used before the owner signs the funding transaction. */
+/**
+ * Validation used before the owner signs the funding transaction.
+ *
+ * Na signs ONE policy for both asset classes, so the default category is `ANY`: the owner authorizes
+ * a budget once and Na decides NFT vs RWA from the request. A narrower `NFT`/`RWA` policy is still
+ * accepted so the on-chain program and older clients remain valid, but the product no longer asks
+ * the owner to choose a category when signing.
+ */
 export const createMandateInputSchema = z.object({
   budgetSol: z.number().finite().positive().max(10_000),
   expiresInHours: z.number().int().min(1).max(24 * 30),
-  category: z.enum(['ANY', 'NFT', 'RWA']),
+  category: z.enum(['ANY', 'NFT', 'RWA']).default('ANY'),
 }).strict()
 export type CreateMandateInput = z.infer<typeof createMandateInputSchema>
 
@@ -200,6 +214,10 @@ export function explainMandateRejection(rejection: MandateRejection, context: { 
       return 'Mandate vẫn đang hoạt động. Hãy thu hồi mandate trước khi rút số SOL còn lại.'
     case 'TransactionFailed':
       return 'Giao dịch không hoàn tất trên Solana Devnet. Không có khoản chi nào được ghi nhận.'
+    default:
+      // The remaining members are the genuine-purchase rejections; their wording lives beside the
+      // purchase contract so the settlement vocabulary stays unchanged.
+      return explainNftPurchaseRejection(rejection)
   }
 }
 

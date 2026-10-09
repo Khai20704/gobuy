@@ -1,3 +1,4 @@
+import { devnetRpc } from '../delivery/rpc.js'
 import { FileOrderStore, MongoOrderStore, type OrderStore } from '../../persistence/OrderStore.js'
 import { createHash } from 'node:crypto'
 import { storageMode } from '../../persistence/mongo.js'
@@ -31,7 +32,7 @@ export class NftDemoService {
     this.directory = directory ?? resolve(process.env.NFT_DATA_DIR || '.data/nft-demo')
     this.store = store ?? (directory || storageMode() === 'file' ? new FileOrderStore(this.directory) : new MongoOrderStore())
     if (rpc !== solanaConfig(process.env).rpcUrl) throw new Error('RPC must match SOLANA_RPC_URL')
-    this.connection = new Connection(rpc, { commitment: 'confirmed', disableRetryOnRateLimit: true })
+    this.connection = devnetRpc(rpc)
     this.umi = createUmi(rpc).use(mplCore())
   }
   private async devnet() {

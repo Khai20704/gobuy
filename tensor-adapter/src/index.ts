@@ -206,12 +206,20 @@ export async function scanTensorDevnetListings(
   }
 }
 
+/**
+ * Builds the BuyLegacy instruction for a specific buyer and payer.
+ *
+ * `buyer` receives the NFT (its associated token account is the destination) and `payer` signs and
+ * pays. They are the same for a plain wallet purchase; passing a separate `payerValue` lets
+ * GoBuy's Vault PDA pay while the mandate owner still receives the original NFT.
+ */
 export async function buildTensorLegacyBuyInstruction(
   rpcUrl: string,
   mintValue: string,
   buyerValue: string,
   maximumLamports: bigint,
   signal = AbortSignal.timeout(15_000),
+  payerValue = buyerValue,
 ): Promise<TensorBuyInstruction> {
   const { rpc } = await devnetRpc(rpcUrl, signal)
   const mint = address(mintValue)
@@ -247,7 +255,8 @@ export async function buildTensorLegacyBuyInstruction(
   const instruction = await getBuyLegacyInstructionAsync({
     owner: state.owner,
     mint,
-    payer: createNoopSigner(buyer),
+    buyer,
+    payer: createNoopSigner(address(payerValue)),
     maxAmount: state.amount,
     rentDestination: state.rentPayer ?? undefined,
     makerBroker: some(state.makerBroker),

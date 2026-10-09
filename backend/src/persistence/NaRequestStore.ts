@@ -1,14 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { naRequestSchema } from '@gobuy/shared'
+import { naRequestSchema, type PurchasePhase } from '@gobuy/shared'
 import { mongoDatabase, type DatabaseProvider } from './mongo.js'
 
 export type NaRequestStatus = 'PROCESSING' | 'NEEDS_INPUT' | 'NO_MATCH' | 'QUOTED' | 'PENDING' | 'CONFIRMED' | 'FAILED' | 'NOT_SUBMITTED'
 export type NaRequest = {
   id: string
+  conversationId?: string
   prompt: string
   status: NaRequestStatus
+  phase?: PurchasePhase
   response?: string
   orderId?: string
   title?: string
@@ -16,7 +18,7 @@ export type NaRequest = {
   createdAt: string
   updatedAt: string
 }
-export type NaRequestUpdate = Pick<NaRequest, 'status'> & Partial<Pick<NaRequest, 'response' | 'orderId' | 'title' | 'signature'>>
+export type NaRequestUpdate = Pick<NaRequest, 'status'> & Partial<Pick<NaRequest, 'response' | 'orderId' | 'title' | 'signature' | 'phase' | 'conversationId'>>
 export interface NaRequestStore {
   create(userId: string, id: string, prompt: string): Promise<void>
   update(userId: string, id: string, update: NaRequestUpdate): Promise<void>

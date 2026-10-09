@@ -13,6 +13,10 @@ import { NaChatService } from '../../services/acquisition/NaChatService.js'
 import { TensorAwareExecutionEngine } from '../../services/acquisition/TensorDevnetExecutor.js'
 import { agentKeypair } from '../../services/mandate/agentKeypair.js'
 import { describeMandate, mandateProgramId, requiredMandateGuard, serializeMandate } from '../../services/mandate/MandateGuard.js'
+import { deliveryService } from '../../services/delivery/delivery.js'
+import { walletHoldings } from '../../services/delivery/walletHoldings.js'
+import { undeliveredPayments } from '../../services/delivery/undeliveredPayments.js'
+import { DemoRecovery } from '../../services/delivery/DemoRecovery.js'
 
 export function acquisitionRoutes(authenticate: RequestHandler, requireReady: RequestHandler, origins: string[], injected?: AcquisitionService) {
   const config = acquisitionConfig()
@@ -38,6 +42,18 @@ export function acquisitionRoutes(authenticate: RequestHandler, requireReady: Re
   // Origin decides, never Sec-Fetch-Site.
   router.use(originGuard(origins, response => response.status(403).json({ error: { message: 'Mở GoBuy từ địa chỉ ứng dụng đã cấu hình.' } })))
   router.use(authenticate)
+  router.post('/autonomous-spends/:id/demo-consent', async (req, res) => {
+    const input = z.object({ owner: walletAddressSchema }).strict().parse(req.body)
+    const id = z.uuid().parse(req.params.id)
+    res.json(await new DemoRecovery().challenge(res.locals.identity.uid, id, input.owner))
+  })
+  router.post('/autonomous-spends/:id/demo-recovery', async (req, res) => {
+    const input = z.object({ challengeId: z.uuid(), signature: z.string().regex(/^[A-Za-z0-9+/]{86}==$/) }).strict().parse(req.body)
+    const id = z.uuid().parse(req.params.id)
+    await new DemoRecovery().accept(res.locals.identity.uid, id, input.challengeId, input.signature)
+    // Consent queues delivery; no transaction is broadcast by this endpoint.
+    res.json({ accepted: true, message: 'Đã lưu đồng ý nhận NFT demo. Không thanh toán lại.' })
+  })
   router.get('/config', (_req, res) => {
     const programId = mandateProgramId()
     res.json({ discoveryMode: config.NFT_DISCOVERY_MODE, discoveryNetwork: config.DISCOVERY_NETWORK,
@@ -69,13 +85,33 @@ export function acquisitionRoutes(authenticate: RequestHandler, requireReady: Re
     res.json(await service().wallets.verify(res.locals.identity.uid, input.data.id, input.data.signature))
   })
   router.get('/portfolio', async (_req, res) => res.json(await service().portfolio.list(res.locals.identity.uid)))
+  router.get('/deliveries', async (_req, res) => res.json(await deliveryService().list(res.locals.identity.uid)))
+  router.get('/undelivered-payments', async (_req, res) => res.json(await undeliveredPayments(res.locals.identity.uid)))
+  router.get('/holdings', async (_req, res) => {
+    const wallets = await service().wallets.list(res.locals.identity.uid)
+    const results = await Promise.all(wallets.map(async wallet => {
+      try { return { holdings: await walletHoldings(wallet.address), error: '' } }
+      catch { return { holdings: [], error: `Không xác minh được số dư Devnet của ${wallet.address}.` } }
+    }))
+    res.json({ holdings: results.flatMap(result => result.holdings), errors: results.map(result => result.error).filter(Boolean) })
+  })
   router.post('/requests', async (req, res) => {
-    const input = z.object({ id: z.uuid(), prompt: z.string().trim().min(1).max(2000), response: z.string().trim().min(1).max(500) }).strict().safeParse(req.body)
+    const input = z.object({ id: z.uuid(), conversationId: z.uuid().optional(), prompt: z.string().trim().min(1).max(2000), response: z.string().trim().min(1).max(500) }).strict().safeParse(req.body)
     if (!input.success) throw new InputError('Yêu cầu lưu lịch sử không hợp lệ.')
     const uid = res.locals.identity.uid as string
     await history.create(uid, input.data.id, input.data.prompt)
-    await history.update(uid, input.data.id, { status: 'NEEDS_INPUT', response: input.data.response })
+    await history.update(uid, input.data.id, { status: 'NEEDS_INPUT', response: input.data.response, conversationId: input.data.conversationId })
     res.sendStatus(204)
+  })
+  router.post('/requests/:id/resume', async (req, res) => {
+    if (!z.uuid().safeParse(req.params.id).success) throw new InputError('Mã lịch sử không hợp lệ.')
+    const uid = res.locals.identity.uid as string
+    const requests = await history.list(uid, 1000)
+    const request = requests.find(row => row.id === req.params.id)
+    if (!request) throw new InputError('Không tìm thấy lịch sử của tài khoản này.')
+    const result = await service().resumeConversation(uid, request)
+    res.json({ ...result, requests: requests.filter(row => row.id === request.id || (request.conversationId && row.conversationId === request.conversationId))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt)) })
   })
   router.post('/discover', async (req, res) => {
     const input = z.object({ id: z.uuid(), text: z.string().trim().min(1).max(2000), prompt: z.string().trim().min(1).max(2000).optional(),
@@ -83,6 +119,7 @@ export function acquisitionRoutes(authenticate: RequestHandler, requireReady: Re
     if (!input.success) throw new InputError('Yêu cầu tìm NFT không hợp lệ.')
     const uid = res.locals.identity.uid as string
     await history.create(uid, input.data.id, input.data.prompt ?? input.data.text)
+    if (input.data.conversationId) await history.update(uid, input.data.id, { status: 'PROCESSING', conversationId: input.data.conversationId })
     try {
       const reply = await service().discover(uid, input.data.text, input.data.id, input.data.conversationId, input.data.owner)
       await history.update(uid, input.data.id, { status: reply.status === 'DATA_UNAVAILABLE' ? 'FAILED'
@@ -96,7 +133,11 @@ export function acquisitionRoutes(authenticate: RequestHandler, requireReady: Re
   router.post('/chat', async (req, res) => {
     const input = z.object({ text: z.string().trim().min(1).max(2000), conversationId: z.uuid().optional() }).strict().safeParse(req.body)
     if (!input.success) throw new InputError('Câu hỏi không hợp lệ.')
-    res.json(await service().chat(res.locals.identity.uid, input.data.text, input.data.conversationId))
+    const reply = await service().chat(res.locals.identity.uid, input.data.text, input.data.conversationId)
+    const id = crypto.randomUUID(), uid = res.locals.identity.uid as string
+    await history.create(uid, id, input.data.text)
+    await history.update(uid, id, { status: 'NEEDS_INPUT', response: reply.message, conversationId: input.data.conversationId })
+    res.json(reply)
   })
   router.post('/quote', requireReady, async (req, res) => {
     const input = z.object({ discoveryId: z.uuid(), candidateId: z.string().min(1).max(150), owner: walletAddressSchema }).strict().safeParse(req.body)
@@ -107,21 +148,23 @@ export function acquisitionRoutes(authenticate: RequestHandler, requireReady: Re
     res.json(result)
   })
   router.post('/autonomous-spend', requireReady, async (req, res) => {
-    const input = z.object({ discoveryId: z.uuid(), candidateId: z.string().min(1).max(150), owner: walletAddressSchema }).strict().safeParse(req.body)
+    const input = z.object({ discoveryId: z.uuid(), candidateId: z.string().min(1).max(150), owner: walletAddressSchema, demoAccepted: z.boolean().optional() }).strict().safeParse(req.body)
     if (!input.success) throw new InputError('Invalid autonomous spend request.')
     const uid = res.locals.identity.uid as string
-    const reply = await service().autonomousPurchase(uid, input.data.discoveryId, input.data.candidateId, input.data.owner)
+    const reply = await service().autonomousPurchase(uid, input.data.discoveryId, input.data.candidateId, input.data.owner, input.data.demoAccepted)
     await history.update(uid, reply.id, { status: reply.result.status === 'NOT_SUBMITTED' ? 'FAILED' : reply.result.status === 'RECONCILIATION_ERROR' ? 'PENDING' : reply.result.status, response: reply.result.message,
+      phase: reply.phase,
       ...(reply.result.signature ? { signature: reply.result.signature } : {}) })
     res.json(reply)
   })
   router.get('/autonomous-spends/:id', async (req, res) => {
     if (!z.uuid().safeParse(req.params.id).success) throw new InputError('Invalid autonomous spend ID.')
     const uid = res.locals.identity.uid as string
-    const query = z.object({ owner: walletAddressSchema.optional() }).strict().safeParse(req.query)
+    const query = z.object({ owner: walletAddressSchema.optional(), readOnly: z.literal('true').optional() }).strict().safeParse(req.query)
     if (!query.success) throw new InputError('Invalid reconciliation owner.')
-    const reply = await service().reconcilePurchase(uid, req.params.id, query.data.owner)
+    const reply = await service().reconcilePurchase(uid, req.params.id, query.data.owner, query.data.readOnly === 'true')
     await history.update(uid, reply.id, { status: reply.status === 'RECONCILIATION_ERROR' ? 'PENDING' : reply.status === 'NOT_SUBMITTED' ? 'FAILED' : reply.status, response: reply.message,
+      phase: reply.purchase?.phase,
       ...(reply.purchase?.result.signature ? { signature: reply.purchase.result.signature } : {}) })
     res.json(reply)
   })
@@ -129,13 +172,13 @@ export function acquisitionRoutes(authenticate: RequestHandler, requireReady: Re
     const input = z.object({ id: z.uuid(), transaction: z.string().min(1).max(5000) }).strict().safeParse(req.body)
     if (!input.success) throw new InputError('Giao dịch không hợp lệ.')
     const receipt = await service().submit(res.locals.identity.uid, input.data.id, input.data.transaction)
-    await history.update(res.locals.identity.uid, input.data.id, { status: receipt.status, response: receipt.message, ...(receipt.signature ? { signature: receipt.signature } : {}) })
+    await history.update(res.locals.identity.uid, input.data.id, { status: receipt.status, phase: receipt.phase, response: receipt.message, ...(receipt.signature ? { signature: receipt.signature } : {}) })
     res.json(receipt)
   })
   router.get('/orders/:id', async (req, res) => {
     if (!z.uuid().safeParse(req.params.id).success) throw new InputError('Mã giao dịch không hợp lệ.')
     const receipt = await service().status(res.locals.identity.uid, req.params.id)
-    await history.update(res.locals.identity.uid, req.params.id, { status: receipt.status, response: receipt.message, ...(receipt.signature ? { signature: receipt.signature } : {}) })
+    await history.update(res.locals.identity.uid, req.params.id, { status: receipt.status, phase: receipt.phase, response: receipt.message, ...(receipt.signature ? { signature: receipt.signature } : {}) })
     res.json(receipt)
   })
   return router

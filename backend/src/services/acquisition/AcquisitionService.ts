@@ -16,6 +16,9 @@ import { AutonomousPurchaseService } from './AutonomousPurchaseService.js'
 import { AutonomousSpendBlockedError } from './AutonomousSpendBlockedError.js'
 import type { AutonomousReconciliation } from '@gobuy/shared'
 import { budgetExpression, normalizeIntentText } from './intentLanguage.js'
+import { deliveryService } from '../delivery/delivery.js'
+import type { AutonomousPurchaseResult } from '@gobuy/shared'
+import type { DeliveryService } from '../delivery/DeliveryService.js'
 
 export type AcquisitionRecord = { id: string; owner: string; candidate: NFTCandidate; maximumLamports: number }
 type SavedDiscovery = { reply: DiscoveryReply; text: string }
@@ -28,13 +31,29 @@ export class AcquisitionService {
     private readonly metadata: AssetStore<NFTCandidate> = assetStore('assetMetadata'), portfolio?: PortfolioService,
     private readonly conversations: AssetStore<NaConversationState> = assetStore('naConversations'),
     private readonly intelligence = new NFTRankingService(), private readonly investmentTwin = new InvestmentTwinService(),
-    private readonly assistant = new NaChatService(), readonly autonomous = new AutonomousPurchaseService()) {
+    private readonly assistant = new NaChatService(), readonly autonomous = new AutonomousPurchaseService(),
+    private readonly deliveries: Pick<DeliveryService, 'deliver'> & Partial<Pick<DeliveryService, 'getPlan' | 'list'>> = {
+      deliver: (user, input) => deliveryService().enqueue(user, input),
+      getPlan: (user, id) => deliveryService().getPlan(user, id), list: user => deliveryService().list(user),
+    }) {
     this.portfolio = portfolio ?? new PortfolioService(executor)
   }
 
   async chat(userId: string, text: string, conversationId?: string) {
     const context = conversationId ? await this.conversations.get(userId, conversationId) : undefined
     return this.assistant.reply(userId, text, conversationId, context)
+  }
+  async resumeConversation(userId: string, request: { id: string; conversationId?: string; prompt: string; response?: string }) {
+    const conversationId = request.conversationId ?? request.id
+    await this.assistant.restore(userId, conversationId, request.prompt, request.response)
+    const existing = await this.conversations.get(userId, conversationId)
+    const saved = await this.discoveries.get(userId, request.id)
+    if (!existing && saved) await this.conversations.put(userId, conversationId, {
+      currentPrompt: saved.text, currentIntent: { ...saved.reply.intent, action: 'SEARCH' },
+      selectedCandidate: saved.reply.candidates[0], previousMints: [],
+      messages: [{ role: 'user', text: request.prompt }, { role: 'na', text: request.response ?? saved.reply.message }],
+    })
+    return { conversationId, discovery: saved?.reply }
   }
   async discover(userId: string, text: string, id: string = randomUUID(), conversationId?: string, owner?: string): Promise<DiscoveryReply> {
     const previous = await this.discoveries.get(userId, id)
@@ -141,7 +160,7 @@ export class AcquisitionService {
     }
     return current
   }
-  async autonomousPurchase(userId: string, discoveryId: string, candidateId: string, owner: string) {
+  async autonomousPurchase(userId: string, discoveryId: string, candidateId: string, owner: string, demoAccepted = false) {
     let executionMayHaveStarted = false
     try {
     // An authenticated app session alone cannot spend somebody else's mandate.
@@ -150,26 +169,38 @@ export class AcquisitionService {
     if (prior) {
       executionMayHaveStarted = true
       if (prior.owner !== owner || prior.reply.selected.id !== candidateId) throw new InputError('Yêu cầu đã gắn với ví/listing khác.')
-      return this.autonomous.status(userId, discoveryId)
+      return this.deliverPurchase(userId, owner, await this.autonomous.status(userId, discoveryId))
     }
     const saved = await this.discoveries.get(userId, discoveryId)
     if (!saved || Date.parse(saved.reply.expiresAt) <= Date.now()) throw new InputError('Discovery expired or does not belong to this account.')
-    if (saved.reply.intent.action !== 'BUY' || saved.reply.intent.priceDiscoveryOnly) throw new InputError('SEARCH has no spending authority. Send an explicit PURCHASE request with a budget.')
+      if (saved.reply.intent.action !== 'BUY' || saved.reply.intent.priceDiscoveryOnly) throw new InputError('SEARCH has no spending authority. Send an explicit PURCHASE request with a budget.')
+      if (!demoAccepted) throw new InputError('Xác nhận NFT GoBuy DEMO trong phần thiết lập ngân sách trước khi mua. Chưa chi SOL.')
     const candidate = saved.reply.candidates.find(item => item.id === candidateId)
     const parsed = autonomousNFTCandidateSchema.safeParse(candidate)
     if (!parsed.success) throw new InputError('Invalid execution listing: ' + parsed.error.issues.map(issue => issue.path.join('.') + ': ' + issue.message).join('; '))
     const fresh = await this.refresh(parsed.data)
     if (fresh.marketplaceListing?.listingId !== parsed.data.marketplaceListing.listingId) throw new InputError('Listing identity changed. Execution blocked.')
     executionMayHaveStarted = true
-    return await this.autonomous.execute(userId, discoveryId, owner, fresh, BigInt(saved.reply.intent.maximumLamports))
+    return this.deliverPurchase(userId, owner, await this.autonomous.execute(userId, discoveryId, owner, fresh, BigInt(saved.reply.intent.maximumLamports),
+      { recipientWallet: owner, verifiedAt: new Date().toISOString() }))
     } catch (error) {
       if (!executionMayHaveStarted && (error instanceof InputError || error instanceof NFTPurchaseError)) throw new AutonomousSpendBlockedError(error.message)
       throw error
     }
   }
-  async reconcilePurchase(userId: string, id: string, owner?: string): Promise<AutonomousReconciliation> {
+  async reconcilePurchase(userId: string, id: string, owner?: string, readOnly = false): Promise<AutonomousReconciliation> {
     try {
       const order = await this.autonomous.existing(userId, id)
+      if (readOnly) {
+        if (!order) return { id, status: 'PENDING', safeToRetry: false, message: 'Đang chờ lưu trạng thái đơn.' }
+        const delivery = (await deliveryService().list(userId)).find(row => row.kind === 'NFT' && row.id === id)
+        const payment = order.reply
+        const phase = delivery?.phase ?? (payment.result.status === 'CONFIRMED' ? 'PAYMENT_CONFIRMED' : 'PAYMENT_PENDING')
+        const status = delivery?.phase === 'COMPLETED' ? 'CONFIRMED' as const : 'PENDING' as const
+        const message = delivery?.message ?? 'Đang chờ xác nhận thanh toán hoặc kế hoạch giao tài sản. Không thanh toán lại.'
+        return { id, status, message, safeToRetry: false, purchase: { ...payment, phase, delivery,
+          result: { ...payment.result, status, message } } }
+      }
       if (!order && !owner) return { id, status: 'RECONCILIATION_ERROR', message: 'Connect the mandate owner to reconcile this request.', safeToRetry: false }
       const address = order?.owner ?? owner!
       await this.wallets.require(userId, address)
@@ -184,14 +215,40 @@ export class AcquisitionService {
             : 'No account-owned BUY discovery exists for this request ID, and the mandate has spending. Do not submit another BUY.' }
       }
       if (!order && Date.parse(saved!.reply.expiresAt) > Date.now()) return { id, status: 'PENDING', message: 'Request may still be preparing. No automatic resubmission.', safeToRetry: false }
-      const purchase = order ? await this.autonomous.status(userId, id)
+      const payment = order ? await this.autonomous.status(userId, id)
         : await this.autonomous.recoverMissing(userId, id, address, saved!.reply.candidates[0], saved!.reply.expiresAt)
+      const purchase = await this.deliverPurchase(userId, address, payment)
       const safeToRetry = (purchase.result.status === 'NOT_SUBMITTED' || purchase.result.status === 'FAILED')
         && purchase.result.mandate?.spentLamports === '0'
       return { id, status: purchase.result.status, message: purchase.result.message, safeToRetry, purchase }
     } catch (error) {
       return { id, status: 'RECONCILIATION_ERROR', message: error instanceof InputError ? error.message : 'Cannot verify chain/database state. Retry BUY remains blocked.', safeToRetry: false }
     }
+  }
+  private async deliverPurchase(userId: string, owner: string, payment: AutonomousPurchaseResult): Promise<AutonomousPurchaseResult> {
+    if (payment.result.status !== 'CONFIRMED') return { ...payment, phase: 'PAYMENT_PENDING' }
+    if (!payment.result.signature) return { ...payment, phase: 'PAYMENT_CONFIRMED',
+      result: { ...payment.result, status: 'PENDING', message: 'Đã xác nhận khoản chi; đang truy tìm chữ ký thanh toán trước khi cấp tài sản.' } }
+    const selected = payment.selected
+    const order = await this.autonomous.existing(userId, payment.id)
+    const plan = await this.deliveries.getPlan?.(userId, payment.id)
+    if (!order || order.owner !== owner) throw new InputError('Order recipient mismatch.')
+    if (plan && plan.mode !== 'DEVNET_DEMO_MINT' || !plan && order.deliveryMode !== 'DEVNET_DEMO_MINT') {
+      const delivery = (await this.deliveries.list?.(userId))?.find(row => row.kind === 'NFT' && row.id === payment.id)
+      return { ...payment, phase: delivery?.phase ?? 'PAYMENT_CONFIRMED', delivery,
+        result: { ...payment.result, status: delivery?.phase === 'COMPLETED' ? 'CONFIRMED' : 'PENDING',
+          message: delivery?.phase === 'COMPLETED' ? delivery.message : 'Đã thanh toán. Đơn cũ cần xác minh ví và đồng ý nhận NFT demo thay thế; không thanh toán lại.' } }
+    }
+    if (plan && (plan.owner !== owner || plan.paymentSignature !== payment.result.signature)) throw new InputError('Delivery identity mismatch.')
+    const { metadataId: _, ...storedInput } = plan ?? { metadataId: '' }
+    const delivery = await this.deliveries.deliver(userId, plan ? storedInput as import('../delivery/DeliveryService.js').DeliveryInput : {
+      id: payment.id, owner, kind: 'NFT', name: selected.name, sourceMint: selected.mint,
+      ...(order.assetStandard ? { assetStandard: order.assetStandard, metadataUri: order.metadataUri, imageUri: order.imageUri } : {}), mode: 'DEVNET_DEMO_MINT', rawQuantity: '1', decimals: 0, paymentSignature: payment.result.signature,
+      recipientWallet: order.recipientWallet, recipientVerifiedAt: order.recipientVerifiedAt,
+      paymentLamports: payment.actualSpendLamports ?? payment.requestedSpendLamports,
+    })
+    return { ...payment, phase: delivery.phase, delivery, result: { ...payment.result,
+      status: delivery.phase === 'COMPLETED' ? 'CONFIRMED' : 'PENDING', message: delivery.message } }
   }
   async prepare(userId: string, discoveryId: string, candidateId: string, owner: string) {
     const saved = await this.discoveries.get(userId, discoveryId)
@@ -228,7 +285,8 @@ export class AcquisitionService {
   }
   private async finish(userId: string, record: AcquisitionRecord, receipt: Awaited<ReturnType<ExecutionEngine['status']>>) {
     await this.portfolio.record(userId, record.id, record.owner, record.candidate, receipt)
-    return receipt
+    return { ...receipt, phase: receipt.status === 'CONFIRMED' ? 'COMPLETED' as const
+      : receipt.status === 'PENDING' ? 'DELIVERY_PENDING' as const : 'PAYMENT_PENDING' as const }
   }
   async status(userId: string, id: string) {
     const record = await this.acquisitions.get(userId, id)

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { devnetDeliverySchema, purchasePhaseSchema } from './devnetDelivery.js'
 
 export const rwaCategorySchema = z.enum(['GOLD', 'TREASURY', 'EQUITY', 'ETF', 'COMMODITY', 'OTHER'])
 export type RWACategory = z.infer<typeof rwaCategorySchema>
@@ -59,17 +60,21 @@ export const nftIntelligenceSchema = z.object({
 })
 
 const mint = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+// Legacy Solana identity stays unchanged. Other deployments are chain-qualified to avoid collisions.
+const rwaIdentity = z.union([mint, z.string().regex(/^(ethereum|base|arbitrum|bsc|polygon|avalanche|gnosis|mantle|ink):0x[0-9a-f]{40}$/)])
 const positiveUnits = z.string().regex(/^[1-9]\d{0,15}$/)
 export const rwaAssetSchema = z.object({
-  mint, symbol: z.string().min(1).max(24), name: z.string().min(1).max(120), issuer: z.string().min(1).max(120),
+  mint: rwaIdentity, symbol: z.string().min(1).max(24), name: z.string().min(1).max(120), issuer: z.string().min(1).max(120),
   category: rwaCategorySchema, underlying: z.string().min(1).max(300),
-  decimals: z.number().int().min(0).max(12), verified: z.boolean(), allowedForSwap: z.boolean(),
+  sector: z.string().min(1).max(120).optional(),
+  syncSource: z.literal('xstocks-v2').optional(),
+  decimals: z.number().int().min(0).max(18).optional(), verified: z.boolean(), allowedForSwap: z.boolean(),
   verificationSource: z.url().refine(v => v.startsWith('https://')), updatedAt: z.iso.datetime(),
   // Optional so existing RWA_APPROVED_LIST rows stay valid; treated as mainnet when absent.
   network: z.enum(['mainnet', 'devnet']).optional(),
   // Administrator attests issuer eligibility; an allowlist is required for restricted assets.
   eligibleWallets: z.array(mint).max(1000).optional(),
-}).strict()
+}).strict().refine(asset => asset.mint.includes(':') || asset.decimals !== undefined, 'Solana decimals required')
 export type RWAAsset = z.infer<typeof rwaAssetSchema>
 
 /** Conditional trigger. Only a price ceiling is supported, in the currency the user named. */
@@ -104,8 +109,8 @@ export const rwaOrderSchema = z.object({
   createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), expiresAt: z.iso.datetime(),
 }).strict()
 export type RWAOrder = z.infer<typeof rwaOrderSchema>
-export const rwaIntentSchema = z.object({
-  category: z.literal('RWA'), subtype: rwaCategorySchema.optional(), symbol: z.string().max(24).optional(), mint: mint.optional(),
+const rwaIntentObjectSchema = z.object({
+  category: z.literal('RWA'), subtype: rwaCategorySchema.optional(), symbol: z.string().max(24).optional(), mint: rwaIdentity.optional(),
   action: z.enum(['SEARCH', 'BUY']), amount: positiveUnits.optional(), currency: z.enum(['SOL', 'USDC']),
   // SPEND: pay `amount` of `currency`. QUANTITY: buy exactly `quantity` asset units, total cost at
   // most `maxTotalSpend`. The two are never interchangeable: "100 USDC NVDAx" spends 100 USDC and
@@ -125,11 +130,24 @@ export const rwaIntentSchema = z.object({
   // RWA_APPROVED_LIST has already approved, and can never grant approval by itself.
   desiredCategory: z.string().min(1).max(40).optional(),
 }).strict()
+// BSON can serialize explicit undefined properties as null. Optional intent fields mean
+// "not specified" in either form; required fields and invalid non-null values still fail.
+export const rwaIntentSchema = z.preprocess(value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const clean = { ...value } as Record<string, unknown>
+  for (const [key, schema] of Object.entries(rwaIntentObjectSchema.shape)) {
+    if (schema.isOptional() && clean[key] == null) delete clean[key]
+  }
+  return clean
+}, rwaIntentObjectSchema).transform(value => {
+  // Do not persist explicit undefined keys in newly parsed intents.
+  return Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined)) as typeof value
+})
 export type RWAIntent = z.infer<typeof rwaIntentSchema>
 
 /** One already-approved candidate returned by a category discovery, with market data and a rank. */
 export const rwaRecommendationSchema = z.object({
-  symbol: z.string().min(1).max(24), mint, name: z.string().min(1).max(120), category: rwaCategorySchema,
+  symbol: z.string().min(1).max(24), mint: rwaIdentity, name: z.string().min(1).max(120), category: rwaCategorySchema,
   // Jupiter market data only. Never used to decide identity or authenticity.
   priceUsd: z.number().finite().nonnegative().nullable(),
   withinBudget: z.boolean().nullable(),
@@ -140,6 +158,13 @@ export const rwaRecommendationSchema = z.object({
 export type RWARecommendation = z.infer<typeof rwaRecommendationSchema>
 
 export const rwaReplySchema = z.object({
+  phase: purchasePhaseSchema.optional(), delivery: devnetDeliverySchema.optional(),
+  referencePrices: z.array(z.object({ mint: z.string(), symbol: z.string(), chain: z.string(),
+    pair: z.string(), priceUsd: z.number().positive().nullable(), url: z.url().refine(value => {
+      const url = new URL(value)
+      return url.protocol === 'https:' && url.hostname === 'dexscreener.com' && !url.username && !url.password
+    }),
+  }).strict()).max(10).optional(),
   id: z.uuid(),
   status: z.enum(['NEEDS_INPUT', 'REJECTED', 'QUOTED', 'APPROVED', 'PENDING', 'CONFIRMED', 'FAILED',
     'WAITING_FOR_PRICE', 'EXECUTING', 'EXECUTION_UNAVAILABLE', 'EXPIRED', 'CANCELLED', 'RECOMMENDED']),

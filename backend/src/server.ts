@@ -1,6 +1,7 @@
 import { createApp } from './app.js'
 import { env } from './config/env.js'
 import { mongoDatabase, storageMode } from './persistence/mongo.js'
+import { startPersistentDeliveryWorker } from './services/delivery/DeliveryWorker.js'
 try {
   if (storageMode() === 'mongo') await mongoDatabase.get()
 } catch (error) {
@@ -12,6 +13,8 @@ const server = createApp().listen(env.PORT, env.HOST, () => {
 })
 server.requestTimeout = 20000
 server.headersTimeout = 10000
+const stopDeliveryWorker = startPersistentDeliveryWorker()
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => {
-  server.close(() => { void mongoDatabase.close() })
+  server.close(() => { void stopDeliveryWorker().then(() => mongoDatabase.close()) })
+  void stopDeliveryWorker()
 })

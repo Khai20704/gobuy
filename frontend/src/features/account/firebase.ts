@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app'
 import { connectAuthEmulator, getAuth } from 'firebase/auth'
 import { apiUrl } from '../../services/api/baseUrl'
+import { accountTransportMessage } from './transportError'
 
 const env = import.meta.env
 export const phoneTestMode = env.DEV && ['localhost', '127.0.0.1'].includes(window.location.hostname) && env.VITE_FIREBASE_PHONE_TEST_MODE === 'true'
@@ -25,6 +26,8 @@ export async function accountFetch(path: string, init: RequestInit = {}) {
   return fetch(apiUrl(path), { ...init, headers, signal: init.signal ?? AbortSignal.timeout(15000) })
 }
 export function authMessage(error: unknown): string {
+  const transport = accountTransportMessage(error)
+  if (transport) return transport
   const code = (error as { code?: string })?.code
   const messages: Record<string, string> = {
     'auth/invalid-credential': 'Email hoặc mật khẩu không đúng.',
@@ -47,6 +50,6 @@ export function authMessage(error: unknown): string {
     'auth/unauthorized-domain': 'Tên miền này chưa được phép đăng nhập trong Firebase.',
     'auth/network-request-failed': 'Không kết nối được dịch vụ đăng nhập. Kiểm tra mạng rồi thử lại.',
   }
-  return code ? messages[code] ?? 'Dịch vụ đăng nhập chưa sẵn sàng. Kiểm tra cấu hình Firebase hoặc thử lại sau.'
+  return typeof code === 'string' && code.startsWith('auth/') ? messages[code] ?? `Chưa hoàn tất xác thực (${code.replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 100)}). Hãy thử lại.`
     : error instanceof Error ? error.message : 'Không hoàn tất được yêu cầu. Vui lòng thử lại.'
 }

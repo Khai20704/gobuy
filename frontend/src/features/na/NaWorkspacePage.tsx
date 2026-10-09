@@ -11,21 +11,24 @@ import { PhantomWalletProvider, type WalletProvider } from '../../services/solan
 import { acquisitionApi as api, AcquisitionApiError } from '../../services/api/acquisition'
 import { investmentApi } from '../../services/api/investment'
 import { nftDemoApi as legacyApi } from '../../services/api/nftDemo'
+import { NaConsole } from './components/NaConsole'
 import { NaVaultPanel } from './components/NaVaultPanel'
 import { RwaOrderDetails } from './components/RwaOrderDetails'
-import { RequestHistory } from './components/RequestHistory'
+import { RequestHistory, purchasePhaseLabel } from './components/RequestHistory'
 import { WalletPortfolioPanel } from './components/WalletPortfolioPanel'
 import { hasSolBudget, isBudgetOnlyReply, isPurchaseIntent, isCollectionPriceDiscovery } from './intentFollowUp'
 import { executeAutonomousPurchase } from './autonomousPurchase'
 import './chat.css'
+import { deliveryStatusLabel, deliveryPollingFinished } from './deliveryStatus'
+import { naRequestSchema, type NaRequest } from '@gobuy/shared'
 
-type Message = { id: string; role: 'user' | 'na'; text: string; discovery?: DiscoveryReply; rwa?: RWAReply; quote?: NftDemoQuote; receipt?: NftDemoReceipt; autonomous?: AutonomousPurchaseResult }
+type Message = { id: string; role: 'user' | 'na'; text: string; restoredOwner?: string; discovery?: DiscoveryReply; rwa?: RWAReply; quote?: NftDemoQuote; receipt?: NftDemoReceipt; autonomous?: AutonomousPurchaseResult }
 
 export function NaWorkspacePage() {
   const account = useAccount()
   const pendingKey = 'na-devnet-pending-order:' + account.user!.uid
   const conversationKey = 'na-conversation:' + account.user!.uid
-  const [conversationId] = useState(() => {
+  const [conversationId, setConversationId] = useState(() => {
     const saved = localStorage.getItem(conversationKey)
     if (saved && /^[0-9a-f-]{36}$/i.test(saved)) return saved
     const id = crypto.randomUUID()
@@ -33,15 +36,18 @@ export function NaWorkspacePage() {
     return id
   })
   const [messages, setMessages] = useState<Message[]>([])
+  const [historyConversation, setHistoryConversation] = useState(false)
   const [text, setText] = useState('')
   const [wallet, setWallet] = useState('')
   const [walletLinked, setWalletLinked] = useState(false)
+  const visibleMessages = messages.filter(message => !message.restoredOwner || message.restoredOwner === wallet)
   const [balance, setBalance] = useState<number | null>(null)
   const [networkError, setNetworkError] = useState('')
   const [devnetReady, setDevnetReady] = useState(false)
   const [walletNotice, setWalletNotice] = useState('')
   const [vaultRevision, setVaultRevision] = useState(0)
   const [requestHistoryRevision, setRequestHistoryRevision] = useState(0)
+  const [deliveryRecoveryRevision, setDeliveryRecoveryRevision] = useState(0)
   const walletRef = useRef('')
   const pendingPurchaseIntent = useRef('')
   const pendingRwaPrompt = useRef('')
@@ -64,8 +70,65 @@ export function NaWorkspacePage() {
   const feed = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   const add = (message: Omit<Message, 'id'>) => setMessages(current => [...current, { id: crypto.randomUUID(), ...message }])
-  // Reconciliation is account-scoped and read-only; naming the connected owner lets the backend bind it.
+  async function openHistory(request: NaRequest) {
+    if (!wallet || lock.current) return
+    lock.current = true; setBusy(true)
+    const owner = wallet
+    try {
+      const result = await api('/requests/' + request.id + '/resume', {}) as { conversationId: string; requests: unknown; discovery?: unknown }
+      if (walletRef.current !== owner) return
+      const rows = naRequestSchema.array().parse(result.requests)
+      const discovery = result.discovery ? discoveryReplySchema.parse(result.discovery) : undefined
+      // Historical listings are context, never fresh purchase authorization.
+      if (discovery) discovery.intent = { ...discovery.intent, action: 'SEARCH' }
+      setConversationId(result.conversationId); localStorage.setItem(conversationKey, result.conversationId)
+      setMessages(rows.flatMap(row => [
+        { id: row.id + ':user', role: 'user' as const, text: row.prompt, restoredOwner: owner },
+        ...(row.response ? [{ id: row.id + ':na', role: 'na' as const, text: row.response, restoredOwner: owner,
+          ...(row.id === request.id && discovery ? { discovery } : {}) }] : []),
+      ]))
+      setHistoryConversation(true); setText('')
+      pendingPurchaseIntent.current = request.status === 'NEEDS_INPUT' && !discovery ? request.prompt : ''
+      pendingRwaPrompt.current = ''
+      input.current?.focus()
+    } catch { setWalletNotice('Chưa mở được cuộc trò chuyện. Thử lại trong Lịch sử.') }
+    finally { lock.current = false; setBusy(false) }
+  }
+  // Account-scoped reconciliation may retry delivery, but never repeats a confirmed payment.
   const reconcileUrl = (id: string) => '/autonomous-spends/' + id + (walletRef.current ? '?owner=' + encodeURIComponent(walletRef.current) : '')
+  useEffect(() => {
+    if (historyConversation || !wallet || !walletLinked || !pendingOrder || localStorage.getItem(pendingKey + ':engine') !== 'autonomous') return
+    let active = true, running = false, done = false
+    const poll = async () => {
+      if (!active || running || done || document.hidden) return
+      running = true
+      try {
+        // Database-only status read. The backend worker owns transaction submission.
+        const reply = autonomousReconciliationSchema.parse(await api('/autonomous-spends/' + pendingOrder + '?readOnly=true'))
+        if (!active || walletRef.current !== wallet || !reply.purchase) return
+        const purchase = reply.purchase
+        const owner = purchase.delivery?.owner ?? purchase.result.mandate?.owner
+        if (owner !== wallet) return
+        setMessages(current => {
+          let index = -1
+          current.forEach((message, i) => { if (message.autonomous?.id === pendingOrder) index = i })
+          const message: Message = { id: index >= 0 ? current[index].id : crypto.randomUUID(), role: 'na', text: reply.message,
+            restoredOwner: index >= 0 ? current[index].restoredOwner : wallet, autonomous: purchase }
+          return index < 0 ? [...current, message] : current.map((row, i) => i === index ? message : row)
+        })
+        done = deliveryPollingFinished(purchase.delivery)
+        if (done) setRequestHistoryRevision(value => value + 1)
+        if (purchase.phase === 'COMPLETED') {
+          localStorage.removeItem(pendingKey); setPendingOrder(''); setVaultRevision(value => value + 1)
+        }
+      } catch { /* A status read failure never clears the paid order. */ }
+      finally { running = false }
+    }
+    const timer = window.setInterval(() => { void poll() }, 8000)
+    document.addEventListener('visibilitychange', poll)
+    void poll()
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener('visibilitychange', poll) }
+  }, [pendingOrder, pendingKey, wallet, walletLinked, historyConversation, deliveryRecoveryRevision])
   /**
    * NFT vs RWA is decided by the backend AssetResolver, never by a keyword list here: a hardcoded
    * list sent any unlisted asset (NVDAx) into the NFT discovery flow.
@@ -90,7 +153,6 @@ export function NaWorkspacePage() {
   }
   useEffect(() => { feed.current?.scrollTo({ top: feed.current.scrollHeight, behavior: 'smooth' }) }, [messages, stage])
   useEffect(() => {
-    void requireDevnet(devnetConnection()).catch(error => setNetworkError(error instanceof Error ? error.message : 'Devnet RPC unavailable.'))
     void api('/config').then(config => {
       const value = config as { discoveryMode: string; discoveryNetwork: string; tensorMarketplace?: boolean }
       setDiscoveryMode(value.discoveryMode === 'mock' ? 'Mock Gallery · Dữ liệu mẫu' : value.tensorMarketplace
@@ -98,6 +160,14 @@ export function NaWorkspacePage() {
         : `Marketplace · ${value.discoveryNetwork} chỉ đọc`)
     }).catch(() => setDiscoveryMode('Chưa xác minh được nguồn dữ liệu'))
   }, [])
+  useEffect(() => {
+    if (!wallet) { setNetworkError(''); return }
+    let active = true
+    void requireDevnet(devnetConnection()).catch(error => {
+      if (active) setNetworkError(error instanceof Error ? error.message : 'Devnet RPC unavailable.')
+    })
+    return () => { active = false }
+  }, [wallet])
   useEffect(() => {
     const provider = findPhantomProvider()
     const reset = () => { walletRef.current = ''; setWallet(''); setWalletLinked(false); setBalance(null); setDevnetReady(false); setWalletNotice('') }
@@ -141,16 +211,54 @@ export function NaWorkspacePage() {
     catch (e) { add({ role: 'na', text: e instanceof Error ? e.message : 'Chưa kết nối được Phantom.' }) }
     finally { lock.current = false; setBusy(false); setStage('') }
   }
+  async function acceptDemoReplacement(reply: AutonomousPurchaseResult) {
+    if (lock.current || !wallet || !walletLinked) return
+    if (!window.confirm('Bạn đồng ý nhận một NFT DEMO mô phỏng thay thế? Đây không phải NFT marketplace gốc. Khoản thanh toán cũ được giữ nguyên, không trừ thêm SOL từ Vault.')) return
+    lock.current = true; setBusy(true)
+    try {
+      const owner = walletRef.current
+      const challenge = await api(`/autonomous-spends/${reply.id}/demo-consent`, { owner }) as { id: string; message: string }
+      const provider = await phantomProvider()
+      if (provider.publicKey?.toBase58() !== owner) throw new Error('Kết nối đúng ví đã mua.')
+      const signature = await signPhantomMessage(provider, challenge.message)
+      if (walletRef.current !== owner || provider.publicKey?.toBase58() !== owner) throw new Error('Ví đã thay đổi.')
+      await api(`/autonomous-spends/${reply.id}/demo-recovery`, { challengeId: challenge.id, signature })
+      const updated = autonomousReconciliationSchema.parse(await api(`/autonomous-spends/${reply.id}?readOnly=true`))
+      if (updated.purchase) setMessages(current => current.map(message => message.autonomous?.id === reply.id
+        ? { ...message, autonomous: updated.purchase, text: updated.message } : message))
+      setRequestHistoryRevision(value => value + 1)
+      setWalletNotice('Đã lưu đồng ý nhận NFT demo thay thế. Không thanh toán lại.')
+      setDeliveryRecoveryRevision(value => value + 1)
+    } catch (error) { setWalletNotice(error instanceof Error ? error.message : 'Chưa thể xác nhận thay thế.') }
+    finally { lock.current = false; setBusy(false) }
+  }
   function complete(receipt: NftDemoReceipt) {
     if (receipt.status === 'CONFIRMED' || receipt.status === 'FAILED') {
       localStorage.removeItem(pendingKey); setPendingOrder('')
       void refreshBalance()
     }
   }
+  async function settleRwa(saved: { requestId: string; text: string; owner: string }) {
+    if (saved.owner !== walletRef.current || !walletLinked || !devnetReady) throw new Error('Kết nối và xác minh đúng ví ban đầu trên Devnet để kiểm tra lại.')
+    const reply = rwaReplySchema.parse(await investmentApi('/rwa/chat-settle', saved))
+    add({ role: 'na', text: reply.message, rwa: reply })
+    pendingRwaPrompt.current = reply.status === 'NEEDS_INPUT' ? saved.text : ''
+    if (reply.status !== 'PENDING') {
+      localStorage.removeItem(pendingKey); localStorage.removeItem(pendingKey + ':rwa'); setPendingOrder('')
+    }
+    setVaultRevision(value => value + 1); setRequestHistoryRevision(value => value + 1)
+    void refreshBalance()
+  }
   async function checkOrder() {
-    if (lock.current || !pendingOrder) return
+    if (lock.current || !pendingOrder || !wallet || !walletLinked) return
     lock.current = true; setBusy(true); setStage('Đang kiểm tra giao dịch trên devnet…')
     try {
+      if (localStorage.getItem(pendingKey + ':engine') === 'rwa') {
+        const saved = JSON.parse(localStorage.getItem(pendingKey + ':rwa') ?? 'null')
+        if (!saved || saved.requestId !== pendingOrder) throw new Error('Không tìm thấy nội dung yêu cầu RWA ban đầu.')
+        await settleRwa(saved)
+        return
+      }
       if (localStorage.getItem(pendingKey + ':engine') === 'autonomous') {
         const reply = autonomousReconciliationSchema.parse(await api(reconcileUrl(pendingOrder)))
         showReconciliation(reply)
@@ -167,8 +275,10 @@ export function NaWorkspacePage() {
   async function submit(event: FormEvent) {
     event.preventDefault()
     const request = text.trim()
-    if (!request || lock.current || pendingOrder) return
+    if (!request || lock.current) return
     lock.current = true; setBusy(true); setWalletNotice('')
+    setStage('Đã nhận tin nhắn. Na đang phân loại yêu cầu…')
+    setText(''); add({ role: 'user', text: request })
     let autoAcquire: { discovery: DiscoveryReply; candidate: NFTCandidate } | undefined
     try {
       const budgetOnlyReply = isBudgetOnlyReply(request)
@@ -183,9 +293,14 @@ export function NaWorkspacePage() {
         : budgetOnlyReply && previousIntent ? `${previousIntent} ${request}` : request
       const chatKind = naChatKind(combinedRequest, hasContext)
       if (chatKind) {
-        setText(''); add({ role: 'user', text: request }); setStage('Na đang trả lời…')
+        setStage('Na đang trả lời…')
         const reply = naChatReplySchema.parse(await api('/chat', { text: combinedRequest, conversationId }))
         add({ role: 'na', text: reply.message })
+        return
+      }
+      if (pendingOrder) {
+        const reply = naChatReplySchema.parse(await api('/chat', { text: request, conversationId }))
+        add({ role: 'na', text: reply.message + '\nĐơn trước vẫn đang chờ kiểm tra; chưa thực hiện thêm giao dịch mua.' })
         return
       }
       const pendingRwa = pendingRwaPrompt.current
@@ -194,30 +309,36 @@ export function NaWorkspacePage() {
       const isRwa = !!pendingRwa && rwaAmountReply ? true : (await classifyAsset(request)).assetType === 'RWA'
       if (isRwa) {
         const rwaText = pendingRwa && rwaAmountReply ? `${pendingRwa} ${request}` : request
-        setText(''); add({ role: 'user', text: request })
         setStage('Na đang kiểm tra registry RWA và quote mainnet…')
+        if (wallet && walletLinked && devnetReady) {
+          await requireDevnet(devnetConnection())
+          const requestId = crypto.randomUUID()
+          const saved = { requestId, text: rwaText, owner: wallet }
+          localStorage.setItem(pendingKey + ':rwa', JSON.stringify(saved))
+          localStorage.setItem(pendingKey + ':engine', 'rwa')
+          localStorage.setItem(pendingKey, requestId); setPendingOrder(requestId)
+          await settleRwa(saved)
+          return
+        }
         const rwa = rwaReplySchema.parse(await investmentApi('/rwa/discover', { text: rwaText, ...(wallet ? { owner: wallet } : {}) }))
         pendingRwaPrompt.current = rwa.status === 'NEEDS_INPUT' ? rwaText : ''
         add({ role: 'na', text: rwa.message, rwa })
         return
       }
       if (budgetOnlyReply && !previousIntent && !hasContext) {
-        setText(''); add({ role: 'user', text: request })
         add({ role: 'na', text: 'Bạn muốn tìm hoặc mua NFT nào? Nói tên tranh, bộ sưu tập hoặc chủ đề bạn thích nhé.' })
         return
       }
       if (!hasContext && !hasSolBudget(combinedRequest) && isPurchaseIntent(combinedRequest) && !isCollectionPriceDiscovery(combinedRequest) && !namedNFTQuery(combinedRequest) && !namedNFTPurchaseName(combinedRequest)) {
         pendingPurchaseIntent.current = combinedRequest
-        setText(''); add({ role: 'user', text: request })
         const response = 'Được, mình sẽ tìm theo yêu cầu đó. Bạn muốn giới hạn giá tối đa bao nhiêu SOL? Trả lời tự nhiên, ví dụ “dưới 1 SOL” hoặc “tầm 0.5 SOL”.'
-        await api('/requests', { id: crypto.randomUUID(), prompt: request, response })
+        await api('/requests', { id: crypto.randomUUID(), prompt: request, response, conversationId })
         setRequestHistoryRevision(value => value + 1)
         add({ role: 'na', text: response })
         return
       }
       pendingPurchaseIntent.current = ''
       setStage('Na đang hiểu chủ đề, lấy listing và kiểm tra ngân sách…')
-      setText(''); add({ role: 'user', text: request })
       const discovery = discoveryReplySchema.parse(await api('/discover', { id: crypto.randomUUID(), text: combinedRequest, prompt: request, conversationId, ...(wallet ? { owner: wallet } : {}) }))
       add({ role: 'na', text: discovery.message, discovery })
       if (discovery.intent.priceDiscoveryOnly && discovery.candidates[0] && discovery.candidates[0].sourceNetwork !== 'mainnet') {
@@ -230,7 +351,9 @@ export function NaWorkspacePage() {
       }
     } catch (e) {
       setText(request)
-      add({ role: 'na', text: e instanceof Error ? e.message : 'Không tìm được dữ liệu NFT. Thử lại sau.' })
+      add({ role: 'na', text: e instanceof Error && e.name === 'TimeoutError'
+        ? 'Yêu cầu tới máy chủ quá thời gian chờ. Nếu đang có giao dịch chờ, dùng Kiểm tra giao dịch; không gửi lại lệnh mua. Nếu chưa bắt đầu thanh toán, bạn có thể thử lại.'
+        : e instanceof Error ? e.message : 'Không tìm được dữ liệu NFT. Thử lại sau.' })
     } finally {
       setRequestHistoryRevision(value => value + 1)
       lock.current = false; setBusy(false); setStage(''); input.current?.focus()
@@ -238,7 +361,7 @@ export function NaWorkspacePage() {
     if (autoAcquire) void acquire(autoAcquire.discovery, autoAcquire.candidate)
   }
   function showReconciliation(reply: AutonomousReconciliation) {
-    // Reconciliation is read-only: it reports chain/database state and never resubmits a spend.
+    // Reconciliation preserves the original payment and may resume asset delivery.
     if (reply.purchase) add({ role: 'na', text: reply.message, autonomous: reply.purchase })
     else add({ role: 'na', text: reply.message })
     if (reply.status === 'PENDING' || reply.status === 'RECONCILIATION_ERROR') return
@@ -268,8 +391,8 @@ export function NaWorkspacePage() {
       // Save before POST: a dropped response must never cause a new spend request.
       localStorage.setItem(pendingKey + ':engine', 'autonomous')
       localStorage.setItem(pendingKey, discovery.id); setPendingOrder(discovery.id)
-      let purchase = await executeAutonomousPurchase(api, discovery, candidate, owner)
-      for (let attempt = 0; attempt < 8 && purchase.result.status === 'PENDING'; attempt++) {
+      let purchase = await executeAutonomousPurchase(api, discovery, candidate, owner, true)
+      for (let attempt = 0; attempt < 8 && purchase.result.status === 'PENDING' && purchase.phase !== 'DELIVERY_FAILED'; attempt++) {
         await new Promise(resolve => setTimeout(resolve, 2000))
         const reconciled = autonomousReconciliationSchema.parse(await api(reconcileUrl(discovery.id)))
         if (reconciled.purchase) purchase = reconciled.purchase
@@ -290,7 +413,7 @@ export function NaWorkspacePage() {
     <header className="chat-header"><a href="/na" className="chat-brand">na<span>·</span></a><div className="chat-title"><strong>Trợ lý tìm &amp; mua tài sản NFT / RWA</strong><span>{discoveryMode}</span></div>
       <Link className="chat-account" to="/account">Tài khoản &amp; địa chỉ</Link>
       <button className="chat-wallet" disabled={busy} onClick={() => void walletButton()}>{wallet ? `${wallet.slice(0, 4)}…${wallet.slice(-4)}` : 'Kết nối Phantom'}</button>
-      <button className="chat-logout" disabled={busy || !!pendingOrder} onClick={() => void account.logout()} title="Đăng xuất khỏi GoBuy" aria-label="Đăng xuất khỏi GoBuy">
+      <button className="chat-logout" disabled={busy} onClick={() => void account.logout()} title="Đăng xuất khỏi GoBuy" aria-label="Đăng xuất khỏi GoBuy">
         <svg className="chat-logout-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M15 4h2.5A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5H15M10 16l-4-4 4-4M6 12h9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
@@ -307,21 +430,28 @@ export function NaWorkspacePage() {
       {walletNotice && <p role="status">{walletNotice}</p>}
       {networkError && <p role="alert">{networkError}</p>}
     </section>
-    <div className="chat-network-note">PURCHASE dùng Na Agent để thực hiện Devnet autonomous spend demo từ Na Vault. Đây chưa phải mua NFT hoàn chỉnh; không xác nhận NFT chuyển vào ví. SEARCH chỉ đề xuất, không chi SOL.</div>
-    <section className="chat-utility-panels" aria-label="Ví, tài sản và yêu cầu">
-      <NaVaultPanel revision={vaultRevision} wallet={wallet} devnetReady={devnetReady} onChanged={() => void refreshBalance()}/>
-      <WalletPortfolioPanel revision={requestHistoryRevision}/>
-      <RequestHistory revision={requestHistoryRevision}/>
+    <section className="chat-network-note" aria-label="Thông tin giao dịch demo">
+      <details><summary>Devnet demo · NFT &amp; RWA</summary>
+        <p>Na dùng ngân sách đã ủy quyền. NFT nhận được là GoBuy DEMO, không phải NFT gốc; RWA không đại diện tài sản thật. Ghi “chỉ tìm” để xem đề xuất mà không chi SOL.</p>
+      </details>
+    </section>
+    <section className="chat-utility-panels" aria-label="Bảng điều khiển Na">
+      <NaConsole
+        walletConnected={!!wallet}
+        budget={<NaVaultPanel revision={vaultRevision} wallet={wallet} devnetReady={devnetReady} onChanged={() => void refreshBalance()}/>}
+        assets={<WalletPortfolioPanel key={wallet} revision={requestHistoryRevision}/>}
+        history={<RequestHistory key={wallet} revision={requestHistoryRevision} onOpen={request => void openHistory(request)} opening={busy}/>}/>
     </section>
     <div className="chat-feed" ref={feed} role="log" aria-label="Cuộc trò chuyện với Na" aria-live="polite">
-      {!messages.length && <section className="chat-welcome"><span className="chat-orbit">✳</span><h1>Bạn muốn tìm NFT nào?</h1><p>Nói chủ đề và ngân sách SOL.<br/>Na chọn listing phù hợp. Khi bạn yêu cầu PURCHASE, Na kiểm tra mandate để thực hiện Devnet autonomous spend demo; không yêu cầu Phantom ký lần hai và chưa mua NFT.</p>
+      {!visibleMessages.length && <section className="chat-welcome"><span className="chat-orbit">✳</span><h1>Bạn muốn tìm NFT nào?</h1><p>Nói chủ đề và ngân sách SOL.<br/>Na kiểm tra listing và mandate, thanh toán bằng SOL Devnet rồi giao tài sản vào ví đã liên kết. Chỉ báo hoàn tất sau khi xác minh nhận tài sản trên chain. RWA demo không đại diện quyền sở hữu RWA thật.</p>
         <div className="chat-prompts">{['Find me an ocean-themed NFT under 1 SOL.', 'Tìm tranh NFT về mèo dưới 0.5 SOL'].map(prompt => <button key={prompt} onClick={() => { setText(prompt); input.current?.focus() }}>{prompt}<span>↗</span></button>)}</div>
       </section>}
-      {messages.map(message => <article key={message.id} className={`chat-message ${message.role}`}>
+      {visibleMessages.map(message => <article key={message.id} className={`chat-message ${message.role}`}>
         {message.role === 'na' && <span className="chat-avatar">na·</span>}
         <div className="chat-bubble"><p>{message.text}</p>
           {message.rwa && <RwaOrderDetails reply={message.rwa} busy={busy} onEvaluate={id => void evaluateRwaOrder(message.id, id)}/>}
           {message.rwa && <section className="chat-rwa-result" aria-label="Thông tin RWA">
+            {message.rwa.signature && <a href={explorerTx(message.rwa.signature)} target="_blank" rel="noreferrer">Xem khoản chi demo Devnet ↗</a>}
             {message.rwa.asset && <><strong>{message.rwa.asset.name} ({message.rwa.asset.symbol})</strong>
               <p>{message.rwa.asset.category} · Issuer: {message.rwa.asset.issuer}</p>
               <p>Underlying: {message.rwa.asset.underlying}</p>
@@ -329,6 +459,13 @@ export function NaWorkspacePage() {
             {message.rwa.quote && <><p>Quote mainnet: {message.rwa.quote.inAmount} input units → {message.rwa.quote.minOutput} output units tối thiểu.</p>
               <p>Route: {message.rwa.quote.route.join(' → ')} · Slippage: {message.rwa.quote.slippageBps} bps</p>
               <p>Đây chỉ là báo giá Solana mainnet. Chưa chuẩn bị hoặc gửi giao dịch; swap thật đang bị tắt.</p></>}
+            {message.rwa.referencePrices?.map((price, index) => <article key={`${price.chain}:${price.pair}:${index}`} style={{ borderBottom: '1px solid #d9e5f5', padding: '12px 0', overflowWrap: 'anywhere' }}>
+              <strong>{price.symbol} · {price.chain}</strong>
+              <p>{price.priceUsd === null ? 'Chưa có giá USD hợp lệ' : `Giá tham khảo: $${price.priceUsd} USD/token`}</p>
+              <p>Địa chỉ token: {price.mint}</p>
+              <a href={price.url} target="_blank" rel="noopener noreferrer">Xem pool trên Dex Screener ↗</a>
+              <p className="candidate-warning">Chưa xác minh RWA · Chỉ tham khảo, không thể mua qua Na.</p>
+            </article>)}
             {message.rwa.warnings.map((warning, index) => <p className="candidate-warning" key={index}>{warning}</p>)}
           </section>}
           {message.discovery && <div>
@@ -366,7 +503,7 @@ export function NaWorkspacePage() {
               </div>
             </div>)}
           </div>}
-          {message.autonomous && <AutonomousSpendDetails reply={message.autonomous}/>}
+          {message.autonomous && <AutonomousSpendDetails reply={message.autonomous} onDemoReplacement={() => void acceptDemoReplacement(message.autonomous!)} canRecover={!!wallet && walletLinked && !busy}/>}
           {message.quote && <div className="chat-art"><img src={message.quote.image} alt={message.quote.title}/><div><small>DEVNET SIMULATION</small><h3>{message.quote.title}</h3><strong>{message.quote.priceLamports / 1e9} SOL thử nghiệm</strong><p>Phí đã được tính trong tổng dự kiến ở trên. Không mua NFT gốc.</p></div></div>}
           {message.receipt?.signature && <code className="transaction-signature">{message.receipt.signature}</code>}
           {message.receipt?.signature && <a className="chat-receipt" href={explorerTx(message.receipt.signature)} target="_blank" rel="noreferrer">Xem giao dịch devnet ↗</a>}
@@ -376,32 +513,54 @@ export function NaWorkspacePage() {
       {stage && <p className="chat-progress" role="status"><span/>{stage}</p>}
     </div>
     <div className="chat-bottom">
-      {pendingOrder && <div className="chat-pending">Một giao dịch đang chờ kiểm tra. Na tạm dừng mua mới.<button disabled={busy} onClick={() => void checkOrder()}>Kiểm tra giao dịch</button></div>}
+      {busy && <p className="chat-hint" role="status">{stage || 'Na đang xử lý, vui lòng chờ…'}</p>}
+      {pendingOrder && <div className="chat-pending">{!wallet
+        ? 'Tài khoản có một đơn cũ chưa hoàn tất. Kết nối đúng ví để xem trạng thái.'
+        : !walletLinked ? 'Xác minh liên kết ví để kiểm tra đơn cũ.'
+        : 'Một đơn trước đó đang chờ kiểm tra. Na tạm dừng mua mới.'}
+        {wallet && walletLinked && <button disabled={busy} onClick={() => void checkOrder()}>Kiểm tra giao dịch</button>}
+      </div>}
       <form className="chat-composer" onSubmit={submit}>
         <label className="sr-only" htmlFor="na-input">Tin nhắn cho Na</label>
         <textarea id="na-input" ref={input} value={text} maxLength={2000} rows={2} placeholder="Ví dụ: Tìm tranh NFT về biển dưới 1 SOL"
           onChange={e => setText(e.target.value)} onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); e.currentTarget.form?.requestSubmit() }
           }}/>
-        <button className="chat-send" aria-label="Gửi tin nhắn" disabled={busy || !!pendingOrder || !text.trim()} type="submit">↑</button>
+        <button className="chat-send" aria-label="Gửi tin nhắn" disabled={busy || !text.trim()} type="submit">↑</button>
       </form><p className="chat-hint">Enter để gửi · Shift + Enter để xuống dòng · Không dùng SOL thật</p>
     </div>
   </main>
 }
 
-function AutonomousSpendDetails({ reply }: { reply: AutonomousPurchaseResult }) {
+function AutonomousSpendDetails({ reply, onDemoReplacement, canRecover }: { reply: AutonomousPurchaseResult; onDemoReplacement: () => void; canRecover: boolean }) {
   const { result } = reply
   const sol = (value: string | undefined | null) => value == null ? 'Unavailable' : (Number(value) / 1e9).toFixed(9) + ' SOL'
   return <section aria-label="Devnet autonomous spend demo">
     <strong>{reply.execution}</strong><p>Selected: {reply.selected.name}</p>
     <p>Listing: {reply.selected.marketplaceListing.listingId}</p>
     <p>Listing price: {sol(reply.listingPriceLamports)} · Actual demo spend: {sol(reply.actualSpendLamports)}</p>
+    {result.signature && (reply.actualSpendLamports !== null || reply.delivery?.payment?.status === 'confirmed')
+      && <p>Na đã thanh toán {Number(reply.actualSpendLamports ?? reply.requestedSpendLamports) / 1e9} SOL Devnet.</p>}
+    {reply.delivery && <>
+      {reply.delivery.replacementAcceptedAt && <p>Recovery approved · Đã xác nhận nhận NFT demo thay thế. {reply.phase === 'COMPLETED' ? 'Delivered · Đã giao' : reply.delivery.recovery?.status === 'requires_attention' ? 'Requires attention · Cần kiểm tra' : 'Mint pending · Chờ tạo và giao NFT demo'}</p>}
+      <p>Ví nhận: <code>{reply.delivery.recipientWallet ?? reply.delivery.owner}</code></p>
+      {reply.delivery.demoName && <p>{reply.delivery.demoName} · NFT mô phỏng, không phải tài sản marketplace gốc.</p>}
+      {reply.delivery.mint && <a href={explorerAccount(reply.delivery.mint)} target="_blank" rel="noreferrer">Mint NFT Devnet: {reply.delivery.mint}</a>}
+    </>}
+    {reply.phase !== 'COMPLETED' && result.signature && reply.actualSpendLamports !== null && reply.deliveryMode !== 'DEVNET_DEMO_MINT' && ['TRANSFER_NFT', 'ORIGINAL_NFT_TRANSFER'].includes(reply.delivery?.deliveryMode ?? '') && <div className="chat-pending">
+      <p>Bạn có thể đồng ý nhận một NFT GoBuy DEMO mô phỏng thay cho NFT gốc. Cần ký xác nhận bằng đúng ví đã mua; không thanh toán lại.</p>
+      <p>Awaiting consent · Chờ xác nhận thay thế</p>
+      <button disabled={!canRecover} onClick={onDemoReplacement}>Nhận NFT demo thay thế</button>
+    </div>}
     <p>Mandate PDA: {result.mandate?.address ?? result.spend?.mandate ?? 'Unavailable'} · {result.mandate?.status}</p>
     <p>Vault PDA: {result.mandate?.vault ?? 'Unavailable'}</p>
     <p>Spent before: {sol(result.spend?.spentBeforeLamports)} · Spent after: {sol(result.spend?.spentAfterLamports)}</p>
     <p>Remaining budget: {sol(result.mandate?.remainingLamports)}</p>
     <p>Signed by: {reply.signedBy} · Phantom signature required: No</p>
-    <p>Status: {result.status}{result.rejection ? ' · ' + result.rejection : ''}</p>
-    {result.signature && <><code>{result.signature}</code><a href={explorerTx(result.signature)} target="_blank" rel="noreferrer">Solana Explorer Devnet</a></>}
+    <p>Status: {reply.delivery ? deliveryStatusLabel(reply.delivery) : reply.phase ? purchasePhaseLabel[reply.phase] : result.status}{result.rejection ? ' · ' + result.rejection : ''}</p>
+    {reply.delivery?.recovery?.nextRetryAt && <p>Lần kiểm tra tiếp theo: {new Date(reply.delivery.recovery.nextRetryAt).toLocaleTimeString('vi-VN')}</p>}
+    {reply.delivery?.recovery?.lastError && <p>Chi tiết: {reply.delivery.recovery.lastError}</p>}
+    {reply.delivery?.signature && <a href={explorerTx(reply.delivery.signature)} target="_blank" rel="noreferrer">Giao dịch giao NFT Devnet ↗</a>}
+    {result.signature && <><code>{result.signature}</code><a href={explorerTx(result.signature)} target="_blank" rel="noreferrer">Giao dịch thanh toán Devnet ↗</a></>}
   </section>
 }

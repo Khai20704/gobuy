@@ -10,9 +10,27 @@ import { executeVaultSpend, spendIdFor } from '../mandate/autonomousSpend.js'
 import { hexBytes, spendRecordAddress } from '../mandate/mandateInstructions.js'
 import { decodeSpendRecord } from '../mandate/spendRecords.js'
 import { AutonomousSpendBlockedError } from './AutonomousSpendBlockedError.js'
+import { publicMetadataUrl, validateCoreUrls } from '../delivery/metadataUrl.js'
 
-export type AutonomousPurchaseOrder = { executionToken: string; owner: string; assetHash: string; reference: string; receiptAddress: string; reply: AutonomousPurchaseResult }
+export type AutonomousPurchaseOrder = { executionToken: string; owner: string; assetHash: string; reference: string; receiptAddress: string; reply: AutonomousPurchaseResult;
+  assetStandard?: 'TOKEN_2022' | 'METAPLEX_CORE'; metadataUri?: string; imageUri?: string; recipientWallet?: string; recipientVerifiedAt?: string; deliveryMode?: 'DEVNET_DEMO_MINT'; demoAcceptedAt?: string;
+  refundedAt?: string; refundSignature?: string; settledAt?: string; settlementStatus?: string;
+  recoveryReview?: { status: 'unsettled'; paymentSignature: string; reviewedAt: string; reviewedBy: string };
+}
 const disclaimer = 'Đây là Devnet autonomous spend demo từ Na Vault; chưa phải giao dịch mua NFT hoàn chỉnh và chưa xác nhận NFT đã chuyển vào ví. Không cần chữ ký Phantom lần hai.'
+
+/**
+ * The DEMO autonomous NFT flow is legacy: it paid the settlement recipient and then minted a GoBuy
+ * DEMO NFT instead of buying the original listing.
+ *
+ * New orders must use the genuine purchase path (`/api/nft-purchases`, Na Vault -> Tensor -> the
+ * owner's wallet). This switch exists only so an operator can still rehearse the old demo, and it
+ * defaults to off. Orders already persisted keep reconciling either way: this never orphans an
+ * in-flight attempt, it only refuses to start a new DEMO one.
+ */
+export function demoAutoPurchaseEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.GOBUY_DEMO_AUTOPURCHASE_ENABLED?.trim().toLowerCase() === 'true'
+}
 
 export class AutonomousPurchaseService {
   private readonly locks = new Set<string>()
@@ -67,7 +85,8 @@ export class AutonomousPurchaseService {
     return remaining
   }
 
-  async execute(userId: string, id: string, owner: string, raw: NFTCandidate, maximum: bigint): Promise<AutonomousPurchaseResult> {
+  async execute(userId: string, id: string, owner: string, raw: NFTCandidate, maximum: bigint,
+    binding?: { recipientWallet: string; verifiedAt: string }): Promise<AutonomousPurchaseResult> {
     const key = userId + ':' + id
     if (this.locks.has(key)) throw new InputError('Devnet autonomous spend demo đang xử lý. Kiểm tra trạng thái, không tạo khoản chi mới.')
     this.locks.add(key)
@@ -78,6 +97,17 @@ export class AutonomousPurchaseService {
         if (previous.owner !== owner || previous.reply.selected.id !== raw.id) throw new InputError('Yêu cầu đã gắn với ví/listing khác.')
         return this.status(userId, id)
       }
+      // A new order never falls back to the DEMO mint: it must go through the genuine purchase path,
+      // where the vault pays Tensor and the original NFT lands in the owner's wallet.
+      if (!demoAutoPurchaseEnabled()) {
+        throw new InputError('Na không còn tạo NFT GoBuy demo cho đơn mới. Gửi yêu cầu mua NFT gốc qua mục mua NFT; '
+          + 'Na Vault sẽ trả cho listing Tensor đã xác minh và NFT gốc vào thẳng ví Phantom của bạn. Chưa có SOL nào bị chi.')
+      }
+      if (!binding || binding.recipientWallet !== owner || !Number.isFinite(Date.parse(binding.verifiedAt))
+        || !PublicKey.isOnCurve(new PublicKey(owner).toBytes())) throw new InputError('Verified Phantom recipient required before payment.')
+      const imageUri = process.env.NFT_DEMO_IMAGE_URL
+      const metadataUri = publicMetadataUrl(createHash('sha256').update(JSON.stringify([userId, 'NFT', id])).digest('hex'), imageUri)
+      validateCoreUrls(metadataUri, imageUri)
       const parsed = autonomousNFTCandidateSchema.safeParse(raw)
       if (!parsed.success) throw new InputError('Invalid execution listing: ' + parsed.error.issues.map(issue => issue.path.join('.') + ': ' + issue.message).join('; '))
       const selected = parsed.data, amount = BigInt(selected.listing.priceLamports)
@@ -112,10 +142,12 @@ export class AutonomousPurchaseService {
       const spendId = spendIdFor(mandate.address, assetHash, amount, reference)
       const receiptAddress = spendRecordAddress(client.programId, expectedMandate, hexBytes(spendId, 16, 'spendId')).toBase58()
       const reply: AutonomousPurchaseResult = { id, execution: 'Devnet autonomous spend demo', network: 'devnet', selected,
+        deliveryMode: 'DEVNET_DEMO_MINT', recipientWallet: binding.recipientWallet,
         listingPriceLamports: amount.toString(), requestedSpendLamports: amount.toString(), actualSpendLamports: null,
         signedBy: 'Na Agent / executor', phantomSignatureRequired: false,
         result: { status: 'PENDING', signature: null, rejection: null, spend: null, mandate: serializeMandate(mandate), message: 'Đang kiểm tra xác nhận. ' + disclaimer } }
-      const order: AutonomousPurchaseOrder = { executionToken: randomUUID(), owner, assetHash, reference, receiptAddress, reply }
+      const order: AutonomousPurchaseOrder = { executionToken: randomUUID(), owner, assetHash, reference, receiptAddress, reply,
+        assetStandard: 'METAPLEX_CORE', metadataUri, imageUri, recipientWallet: binding.recipientWallet, recipientVerifiedAt: binding.verifiedAt, deliveryMode: 'DEVNET_DEMO_MINT', demoAcceptedAt: new Date().toISOString() }
       // Persist before any signing/broadcast. Unknown outcomes can only reconcile, never resubmit.
       reserved = true
       await this.orders.put(userId, id, order, true)
@@ -138,7 +170,7 @@ export class AutonomousPurchaseService {
     const client = this.client()
     await assertDevnet(client.connection, { network: 'devnet', rpcUrl: client.connection.rpcEndpoint })
     order.reply.result.mandate = serializeMandate(await client.read(order.owner))
-    if (order.reply.result.status !== 'PENDING') return autonomousPurchaseResultSchema.parse(order.reply)
+    if (order.reply.result.status !== 'PENDING' && !(order.reply.result.status === 'CONFIRMED' && !order.reply.result.signature)) return autonomousPurchaseResultSchema.parse(order.reply)
     const address = new PublicKey(order.receiptAddress)
     const info = await client.connection.getAccountInfo(address, 'confirmed')
     if (info) {

@@ -1,4 +1,6 @@
 import type { RWAOrder, RWAReply } from '@gobuy/shared'
+import { purchasePhaseLabel } from './RequestHistory'
+import { explorerAccount, explorerTx } from '../../../services/solana/links'
 
 /** Vietnamese labels for the RWA order state machine; unknown states fall back to the raw value. */
 const rwaOrderStatusLabel: Record<string, string> = {
@@ -20,7 +22,12 @@ type Props = { reply: RWAReply; busy: boolean; onEvaluate: (orderId: string) => 
 
 export function RwaOrderDetails({ reply, busy, onEvaluate }: Props) {
   const order: RWAOrder | undefined = reply.order
-  if (!order) return null
+  if (!order) return reply.delivery ? <div className="chat-rwa-order">
+    <p>{purchasePhaseLabel[reply.delivery.phase]}</p>
+    <p>{reply.delivery.quantity} token Devnet demo · không đại diện quyền sở hữu RWA thật.</p>
+    {reply.delivery.mint && <a href={explorerAccount(reply.delivery.mint)} target="_blank" rel="noreferrer">Mint Devnet ↗</a>}{' · '}
+    {reply.delivery.signature && <a href={explorerTx(reply.delivery.signature)} target="_blank" rel="noreferrer">Giao dịch giao token ↗</a>}
+  </div> : null
   const spent = order.orderType === 'QUANTITY'
     ? `${formatUnits(order.quantity, reply.asset?.decimals ?? 0)} ${order.symbol} (trần ${formatUnits(order.maxTotalSpend, currencyDecimals(order.maxSpendCurrency))} ${order.maxSpendCurrency ?? ''})`
     : `${formatUnits(order.spendAmount, currencyDecimals(order.spendCurrency))} ${order.spendCurrency ?? ''}`
