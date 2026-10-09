@@ -1,7 +1,7 @@
 // Read-only remote snapshots; unsigned simulations only on a child-owned local validator.
 // This is an availability probe, NOT a GoBuy purchase integration test.
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, writeFile, readFile, open, mkdtemp } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, open, mkdtemp, readdir, copyFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
@@ -46,18 +46,20 @@ const report = {
   kind: 'availability-only', startedAt: new Date().toISOString(), remote: REMOTE,
   local: LOCAL, programs: [], integration: 'BLOCKED_NOT_EXECUTED',
   purchases: 0, signatures: [],
+  validatorStarted: false, genuineProgramsLoaded: false, tensorDispatchExecuted: false,
+  startupAttempts: [],
 };
 async function save(name, value) {
   await writeFile(join(out, name), JSON.stringify(value, null, 2) + '\n');
 }
-async function rpc(url, method, params = []) {
+async function rpc(url, method, params = [], timeoutMs = 30000) {
   const allowed = url === REMOTE ? ['getAccountInfo']
     : url === LOCAL ? ['getHealth', 'getAccountInfo', 'getLatestBlockhash', 'simulateTransaction', 'getGenesisHash'] : [];
   if (!allowed.includes(method)) throw new Error(`RPC method or endpoint forbidden: ${method}`);
   const response = await fetch(url, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    signal: AbortSignal.timeout(30000), redirect: 'error',
+    signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
   });
   if (!response.ok) throw new Error(`RPC HTTP ${response.status}`);
   const body = await response.json();
@@ -66,6 +68,95 @@ async function rpc(url, method, params = []) {
 }
 let validator;
 let log;
+let activeAttempt;
+let closed;
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function stopValidator() {
+  if (validator?.pid && validator.exitCode === null && validator.signalCode === null) {
+    activeAttempt.cleanupSignal = 'SIGTERM';
+    validator.kill('SIGTERM');
+    await Promise.race([closed, delay(5000)]);
+    if (validator.exitCode === null && validator.signalCode === null) {
+      activeAttempt.cleanupSignal = 'SIGKILL';
+      validator.kill('SIGKILL');
+    }
+  }
+  if (closed) await Promise.race([closed, delay(5000)]);
+  await log?.close();
+  log = undefined;
+  if (activeAttempt) {
+    // Only logs: never copy a ledger directory or validator-generated keypairs.
+    try {
+      for (const file of await readdir(activeAttempt.ledger)) {
+        if (/^validator(?:-\d+)?\.log$/.test(file)) {
+          await copyFile(join(activeAttempt.ledger, file), join(out, `${activeAttempt.name}-ledger-${file}`));
+        }
+      }
+    } catch (error) { activeAttempt.logCollectionError = error.message; }
+    try {
+      const lines = (await readFile(join(out, activeAttempt.logFile), 'utf8')).split(/\r?\n/);
+      activeAttempt.firstErrorCandidate = lines.find(line => /error|panicked|fatal|invalid value|unexpected argument/i.test(line)) ?? null;
+      activeAttempt.logTail = lines.slice(-40);
+    } catch (error) { activeAttempt.logReadError = error.message; }
+    await save(`${activeAttempt.name}-startup.json`, activeAttempt);
+  }
+  validator = undefined;
+  closed = undefined;
+}
+async function startValidator(name, selectedPrograms, payer) {
+  await stopValidator();
+  let occupied = false;
+  try { await fetch(LOCAL, { signal: AbortSignal.timeout(1000) }); occupied = true; } catch {}
+  if (occupied) throw new Error('Local RPC port already occupied');
+  const ledger = await mkdtemp(join(tmpdir(), 'gobuy-tensor-'));
+  // Arguments are constructed only from public IDs, local paths and fixed ports.
+  // Never record process.env, credentials, CLI wallet configuration or arbitrary user arguments.
+  const args = ['--log', '--ledger', ledger, '--bind-address', '127.0.0.1', '--rpc-port', '18899',
+    '--faucet-port', '18901', '--gossip-port', '18898', '--dynamic-port-range', '19000-19020', '--mint', payer];
+  for (const program of selectedPrograms) args.push('--bpf-program', program.address, program.path);
+  activeAttempt = { name, ledger, command: 'solana-test-validator', args,
+    logFile: name === 'full' ? 'validator.log' : `${name}-validator.log`,
+    startedAt: new Date().toISOString(), programs: selectedPrograms,
+    timeoutMs: 90000, healthChecks: [], status: 'STARTING' };
+  const attempt = activeAttempt;
+  report.startupAttempts.push(attempt);
+  await save(`${name}-startup.json`, attempt);
+  await save('report.json', report);
+  log = await open(join(out, attempt.logFile), 'w');
+  validator = spawn('solana-test-validator', args, { stdio: ['ignore', log.fd, log.fd] });
+  attempt.pid = validator.pid;
+  let launchError;
+  validator.on('error', error => { launchError = error; attempt.spawnError = error.message; });
+  closed = new Promise(resolve => validator.once('close', (code, signal) => {
+    Object.assign(attempt, { exitCode: code, signal, exitedAt: new Date().toISOString() });
+    resolve();
+  }));
+  try {
+    const deadline = Date.now() + attempt.timeoutMs;
+    while (Date.now() < deadline) {
+      if (launchError || validator.exitCode !== null || validator.signalCode !== null) {
+        throw launchError ?? new Error(`Validator exited during startup (code=${validator.exitCode}, signal=${validator.signalCode})`);
+      }
+      const check = { at: new Date().toISOString() };
+      attempt.healthChecks.push(check);
+      try { check.result = await rpc(LOCAL, 'getHealth', [], Math.min(2000, deadline - Date.now())); }
+      catch (error) { check.error = error.message; }
+      if (check.result === 'ok' && validator.exitCode === null && validator.signalCode === null) {
+        attempt.status = 'HEALTHY';
+        attempt.genesisHash = await rpc(LOCAL, 'getGenesisHash', [], 2000);
+        await save(`${name}-startup.json`, attempt);
+        return;
+      }
+      await delay(Math.min(1000, Math.max(0, deadline - Date.now())));
+    }
+    throw new Error('Local validator startup timeout (90 seconds)');
+  } catch (error) {
+    attempt.status = 'FAILED';
+    attempt.error = error.message;
+    await stopValidator();
+    throw error;
+  }
+}
 try {
   for (const [name, address] of Object.entries(programs)) {
     const entry = { name, address };
@@ -114,35 +205,40 @@ try {
     const version = spawnSync('solana-test-validator', ['--version'], { encoding: 'utf8' });
     if (version.error || version.status !== 0) throw new Error('solana-test-validator unavailable; use Linux workflow');
     report.validatorVersion = version.stdout.trim();
-    // Never connect to a pre-existing validator, even at the fixed loopback endpoint.
-    let occupied = false;
-    try { await fetch(LOCAL, { signal: AbortSignal.timeout(1000) }); occupied = true; } catch {}
-    if (occupied) throw new Error('Local RPC port already occupied');
-    const ledger = await mkdtemp(join(tmpdir(), 'gobuy-tensor-'));
     const payerBytes = randomBytes(32); // public address only; no signing key exists or is read.
     const payer = encode(payerBytes);
-    const args = ['--ledger', ledger, '--bind-address', '127.0.0.1', '--rpc-port', '18899',
-      '--faucet-port', '18901', '--gossip-port', '18898', '--dynamic-port-range', '19000-19020',
-      '--mint', payer, '--bpf-program', GOBUY, resolve(artifact)];
-    for (const [name, address] of Object.entries(programs)) args.push('--bpf-program', address, join(out, `${name}.so`));
-    log = await open(join(out, 'validator.log'), 'w');
-    validator = spawn('solana-test-validator', args, { stdio: ['ignore', log.fd, log.fd] });
-    let launchError;
-    validator.on('error', error => { launchError = error; });
-    let healthy = false;
-    for (let attempt = 0; attempt < 60; attempt++) {
-      if (launchError || validator.exitCode !== null) throw launchError ?? new Error('Validator exited during startup');
-      try { healthy = await rpc(LOCAL, 'getHealth') === 'ok'; } catch {}
-      if (healthy) break;
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    const selected = [{ name: 'gobuy', address: GOBUY, path: resolve(artifact), sha256: hash(binary) },
+      ...Object.entries(programs).map(([name, address]) => ({ name, address,
+        path: join(out, `${name}.so`), sha256: report.programs.find(p => p.name === name).sha256 }))];
+    if (process.argv.includes('--incremental-startup')) {
+      await startValidator('baseline', [], payer);
+      for (let count = 1; count < selected.length; count++) {
+        await startValidator(`increment-${count}-${selected[count - 1].name}`, selected.slice(0, count), payer);
+      }
     }
-    if (!healthy) throw new Error('Local validator startup timeout');
+    await startValidator('full', selected, payer);
+    report.validatorStarted = true;
     report.genesisHash = await rpc(LOCAL, 'getGenesisHash');
-    for (const address of [GOBUY, ...Object.values(programs)]) {
+    report.loadedPrograms = [];
+    for (const { address, sha256 } of selected) {
       const loaded = await rpc(LOCAL, 'getAccountInfo', [address, { encoding: 'base64' }]);
       if (!loaded.value?.executable) throw new Error(`Program not executable locally: ${address}`);
       await save(`local-${address}.json`, loaded);
+      let bytes = Buffer.from(loaded.value.data[0], 'base64');
+      if (loaded.value.owner === LOADER) {
+        if (bytes.length !== 36 || bytes.readUInt32LE(0) !== 2) throw new Error(`Invalid local program pointer: ${address}`);
+        const data = await rpc(LOCAL, 'getAccountInfo', [encode(bytes.subarray(4)), { encoding: 'base64' }]);
+        if (data.value?.owner !== LOADER) throw new Error(`Invalid local ProgramData owner: ${address}`);
+        bytes = Buffer.from(data.value.data[0], 'base64');
+        if (bytes.readUInt32LE(0) !== 3) throw new Error(`Invalid local ProgramData: ${address}`);
+        bytes = bytes.subarray(45);
+      } else if (loaded.value.owner !== 'BPFLoader2111111111111111111111111111111111') {
+        throw new Error(`Unexpected local loader: ${address}`);
+      }
+      if (hash(bytes) !== sha256) throw new Error(`Local bytecode hash mismatch: ${address}`);
+      report.loadedPrograms.push({ address, sha256, executable: true, loader: loaded.value.owner });
     }
+    report.genuineProgramsLoaded = true;
     const blockhash = (await rpc(LOCAL, 'getLatestBlockhash')).value.blockhash;
     const data = Buffer.alloc(18);
     Buffer.from('447f2b08d41ff972', 'hex').copy(data);
@@ -160,6 +256,7 @@ try {
       throw new Error('Expected genuine BuyLegacy dispatch/account-validation evidence missing');
     }
     report.availability = 'LOCAL_BUY_LEGACY_DISPATCH_VERIFIED';
+    report.tensorDispatchExecuted = true;
     report.limit = 'Unsigned direct Tensor simulation, missing accounts; no GoBuy CPI, listing, delivery, receipt, or rollback proof';
   }
 } catch (error) {
@@ -167,12 +264,7 @@ try {
   report.error = error.message;
   process.exitCode = 1;
 } finally {
-  if (validator && validator.exitCode === null) {
-    validator.kill('SIGTERM');
-    await Promise.race([new Promise(resolve => validator.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 5000))]);
-    if (validator.exitCode === null) validator.kill('SIGKILL');
-  }
-  await log?.close();
+  try { await stopValidator(); } catch (error) { report.cleanupError = error.message; process.exitCode = 1; }
   report.finishedAt = new Date().toISOString();
   await save('report.json', report);
   console.log(JSON.stringify(report, null, 2));

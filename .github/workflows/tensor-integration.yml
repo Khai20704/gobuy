@@ -8,6 +8,11 @@ on:
         required: true
         default: '37964523776'
         type: string
+      incremental_startup:
+        description: Start a fresh baseline, then add each genuine program to isolate startup failures
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -16,7 +21,7 @@ permissions:
 jobs:
   real-tensor-preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -63,13 +68,32 @@ jobs:
           sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.14/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
       - name: Snapshot real programs and probe local BuyLegacy dispatch
-        run: node scripts/tensor-local-preflight.mjs integration-evidence .tmp-anchor-artifact/anchor/target/deploy/gobuy_na.so
+        env:
+          INCREMENTAL_STARTUP: ${{ inputs.incremental_startup }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$INCREMENTAL_STARTUP" = 'true' ]; then args+=(--incremental-startup); fi
+          node scripts/tensor-local-preflight.mjs integration-evidence .tmp-anchor-artifact/anchor/target/deploy/gobuy_na.so "${args[@]}"
+      - name: Print startup diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for file in integration-evidence/*startup.json integration-evidence/*validator.log; do
+            echo "Diagnostic file: $file"
+            tail -n 100 "$file"
+          done
       - name: Report the integration gate honestly
         if: always()
         shell: bash
         run: |
           echo 'This job checks prerequisites only. GoBuy CPI purchase integration: NOT EXECUTED.' >> "$GITHUB_STEP_SUMMARY"
           echo 'A green preflight is not evidence of NFT delivery, spending, receipts or rollback.' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f integration-evidence/report.json ]; then
+            node -e 'const r=require("./integration-evidence/report.json"); for (const k of ["validatorStarted","genuineProgramsLoaded","tensorDispatchExecuted","integration"]) console.log(`${k}: ${r[k] ?? "NOT_REACHED"}`)' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Preserve public evidence only
         if: always()
         uses: actions/upload-artifact@v4

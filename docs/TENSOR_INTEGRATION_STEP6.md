@@ -1,5 +1,110 @@
 # Step 6: real Tensor integration gate
 
+## Step 6.1: startup diagnostics (current status)
+
+### ROOT_CAUSE
+
+**Validator startup cause remains unknown. No startup fix is claimed.**
+Run [37967999612](https://github.com/Khai20704/gobuy/actions/runs/37967999612)
+failed at the preflight step on commit `395005dce400eadf853942ddfb0d69c9be72b12f`.
+The public jobs API confirms artifact download, identity/checksum verification and Agave
+installation succeeded, followed by preflight failure. The user-provided report confirms
+five snapshots succeeded and the validator exited before the dispatch probe.
+
+A **diagnostics defect** is confirmed independently: Agave v3.0.14's
+[CLI source](https://github.com/anza-xyz/agave/blob/v3.0.14/validator/src/bin/solana-test-validator.rs)
+redirects stderr to a timestamped log inside the ledger unless `--log` is supplied.
+The old script captured process stdout/stderr but omitted that flag and did not preserve
+ledger logs. Consequently, its generic startup error could hide the actionable runtime error.
+This explains missing diagnostics, not why this particular validator exited.
+
+### VALIDATOR_LOG_EVIDENCE
+
+Artifact `tensor-integration-prerequisites` (ID `11633234877`) was uploaded successfully.
+Attempts to retrieve it through the unauthenticated GitHub API returned HTTP 401; job-log
+download for job `113947134940` returned HTTP 403. No downloaded validator log was found
+locally. The actual previous stdout/stderr, exit code, signal and ledger log have therefore
+**not been examined**. Do not infer a port, CPU, memory or binary compatibility error.
+
+### FIX_APPLIED
+
+Diagnostics and verification changes only; Agave version, program bytes and IDs unchanged:
+
+- Add `--log` so complete stdout and runtime stderr share the uploaded `validator.log`.
+- Record each attempt's public command arguments, program paths/hashes, timestamps, PID,
+  exit code, signal, cleanup signal and spawn errors. No environment or wallet configuration
+  is recorded; all arguments are constructed from fixed flags, local paths and public IDs.
+- Preserve allowlisted ledger `validator*.log` files, never ledger keypair JSON or databases.
+- Enforce a 90-second startup deadline with at most 2 seconds per RPC health request;
+  retain every health result/error and the genesis hash on success.
+- Record the first error-like log line as a **candidate**, plus a log tail; neither replaces
+  review of the complete log. Detect signal exits as well as numeric exit codes.
+- Default the manual workflow's `incremental_startup` input to true: fresh baseline with no
+  custom programs, then cumulative GoBuy, Tensor, Metadata, Authorization Rules, SPL Token,
+  and finally ATA. Each stage uses a fresh ledger and stops its child before the next starts.
+  The baseline still includes Agave's built-in programs. Stop on the first failing stage.
+- Once full startup succeeds, verify all six executable accounts at their intended IDs and
+  compare loaded program byte hashes against the source artifact/snapshots. Executable flags
+  alone no longer establish that the intended bytes were loaded.
+- Retain `if: always()` artifact upload; print diagnostic tails on failure and report
+  `validatorStarted`, `genuineProgramsLoaded`, `tensorDispatchExecuted` separately.
+
+Compatibility review: v3.0.14's CLI accepts `--bpf-program` and creates upgradeable program
+accounts. Its [genesis implementation](https://github.com/anza-xyz/agave/blob/v3.0.14/test-validator/src/lib.rs)
+inserts supplied bytecode after the ProgramData header, replacing matching built-in entries.
+Thus ATA's remote older-loader format is deliberately loaded locally through the existing
+upgradeable loader path; its ELF bytes remain unchanged. This source review does **not** prove
+SBF instruction/feature compatibility. The incremental run and dispatch logs must establish
+what executes. Program-account loading also does not prove every dependency can execute its
+instructions. No binary patch, feature deactivation or version bump was applied speculatively.
+
+### FILES_CHANGED
+
+Only `scripts/tensor-local-preflight.mjs`, `.github/workflows/tensor-integration.yml`, and
+`docs/TENSOR_INTEGRATION_STEP6.md`. Existing successful build workflow remains untouched.
+
+### LOCAL_CHECKS
+
+- JavaScript syntax, workflow YAML parsing, default incremental input and always-upload checks passed.
+- Five temporary process-wrapper checks passed: healthy, numeric exit, signal exit, startup
+  timeout and spawn error; log preservation excludes keypair files. These use test doubles
+  for subprocess/RPC behavior and are **not Solana or Tensor integration tests**.
+- `git diff --check` passed. Local validator execution remains unavailable.
+
+### CI_VERIFICATION_STATUS
+
+**Diagnostics change unverified on Linux CI; no rerun was dispatched.** This session has no
+authenticated GitHub dispatch capability and has not accessed credentials or repository secrets.
+
+| Outcome | Status |
+| --- | --- |
+| Validator started successfully | NOT VERIFIED; previous run failed startup |
+| Genuine programs loaded locally | NOT VERIFIED; snapshots alone are insufficient |
+| Tensor BuyLegacy dispatch executed | NOT EXECUTED |
+| Full GoBuy CPI purchase | NOT EXECUTED; outside Step 6.1 |
+
+### REMAINING_BLOCKERS
+
+Previous diagnostic contents require authenticated artifact access or a downloaded copy.
+The local machine has no validator. The first actionable startup error and runtime binary
+compatibility remain unresolved until logs are available or the revised Linux run completes.
+
+### NEXT_STEPS
+
+Publish these changes and start a **new** manual Tensor preflight using build run
+`37964523776`, leaving incremental startup enabled. Rerunning the old failed job uses its old
+workflow revision and will not test these changes. Inspect the first failed stage's
+`*-startup.json`, complete validator log and any ledger log in the always-uploaded artifact.
+If baseline fails, investigate validator/environment setup; if a cumulative stage first fails,
+investigate that addition and its interactions without assuming causation from ordering alone.
+Apply the smallest evidence-backed fix, then repeat. Once all stages pass, run only the
+existing unsigned genuine BuyLegacy missing-account dispatch probe, never a purchase.
+
+---
+
+The original Step 6 investigation below is historical. Its statement that the workflow was
+not yet published/executed is superseded by the failed run and Step 6.1 status above.
+
 ## TEST_ENVIRONMENT
 
 Investigation: 2026-10-10 Asia/Saigon (2026-10-09 UTC). Windows workspace has Node,
