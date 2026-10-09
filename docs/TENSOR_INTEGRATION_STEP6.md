@@ -4,7 +4,18 @@
 
 ### ROOT_CAUSE
 
-**Validator startup cause remains unknown. No startup fix is claimed.**
+**Confirmed root cause from the GitHub Actions error supplied by the user:**
+
+```text
+Invalid value for '--dynamic-port-range <MIN_PORT-MAX_PORT>': Port range is too small. Try --dynamic-port-range 19000-19025
+```
+
+The configured `19000-19020` range was rejected during CLI argument validation.
+It is now `19000-19050` in the shared startup arguments, covering both baseline and
+incremental program stages. This fixes the confirmed configuration error; successful
+validator startup and Tensor execution still require a new GitHub Actions run.
+
+Earlier investigation:
 Run [37967999612](https://github.com/Khai20704/gobuy/actions/runs/37967999612)
 failed at the preflight step on commit `395005dce400eadf853942ddfb0d69c9be72b12f`.
 The public jobs API confirms artifact download, identity/checksum verification and Agave
@@ -16,7 +27,7 @@ A **diagnostics defect** is confirmed independently: Agave v3.0.14's
 redirects stderr to a timestamped log inside the ledger unless `--log` is supplied.
 The old script captured process stdout/stderr but omitted that flag and did not preserve
 ledger logs. Consequently, its generic startup error could hide the actionable runtime error.
-This explains missing diagnostics, not why this particular validator exited.
+This explains the earlier missing diagnostics; the supplied error now identifies the port-range failure.
 
 ### VALIDATOR_LOG_EVIDENCE
 
@@ -24,11 +35,15 @@ Artifact `tensor-integration-prerequisites` (ID `11633234877`) was uploaded succ
 Attempts to retrieve it through the unauthenticated GitHub API returned HTTP 401; job-log
 download for job `113947134940` returned HTTP 403. No downloaded validator log was found
 locally. The actual previous stdout/stderr, exit code, signal and ledger log have therefore
-**not been examined**. Do not infer a port, CPU, memory or binary compatibility error.
+**not been examined directly**. The exact port-range error above was subsequently supplied
+by the user from GitHub Actions. No CPU, memory or binary compatibility failure is established.
 
 ### FIX_APPLIED
 
-Diagnostics and verification changes only; Agave version, program bytes and IDs unchanged:
+Current fix: change the sole executable occurrence of `19000-19020` to `19000-19050`.
+No duplicate range was found in the integration workflow or related scripts.
+Agave version, program bytes and IDs remain unchanged. Existing diagnostics and verification
+are preserved:
 
 - Add `--log` so complete stdout and runtime stderr share the uploaded `validator.log`.
 - Record each attempt's public command arguments, program paths/hashes, timestamps, PID,
@@ -60,12 +75,17 @@ instructions. No binary patch, feature deactivation or version bump was applied 
 
 ### FILES_CHANGED
 
-Only `scripts/tensor-local-preflight.mjs`, `.github/workflows/tensor-integration.yml`, and
-`docs/TENSOR_INTEGRATION_STEP6.md`. Existing successful build workflow remains untouched.
+This port-range fix changes only `scripts/tensor-local-preflight.mjs` and
+`docs/TENSOR_INTEGRATION_STEP6.md`. The integration workflow required no edit.
+Existing successful Anchor CI, program code, Program ID, PDA seeds, wallet logic and
+purchasing logic remain untouched. The earlier diagnostics change also edited the integration workflow.
 
 ### LOCAL_CHECKS
 
 - JavaScript syntax, workflow YAML parsing, default incremental input and always-upload checks passed.
+- For the port-range fix: syntax and workflow validation were rerun; searches found no
+  remaining invalid range in executable scripts/workflows. The script diff contains only
+  the requested range replacement, preserving all existing diagnostics and verification.
 - Five temporary process-wrapper checks passed: healthy, numeric exit, signal exit, startup
   timeout and spawn error; log preservation excludes keypair files. These use test doubles
   for subprocess/RPC behavior and are **not Solana or Tensor integration tests**.
@@ -73,7 +93,7 @@ Only `scripts/tensor-local-preflight.mjs`, `.github/workflows/tensor-integration
 
 ### CI_VERIFICATION_STATUS
 
-**Diagnostics change unverified on Linux CI; no rerun was dispatched.** This session has no
+**Port-range fix unverified on Linux CI; no rerun was dispatched.** This session has no
 authenticated GitHub dispatch capability and has not accessed credentials or repository secrets.
 
 | Outcome | Status |
@@ -85,9 +105,9 @@ authenticated GitHub dispatch capability and has not accessed credentials or rep
 
 ### REMAINING_BLOCKERS
 
-Previous diagnostic contents require authenticated artifact access or a downloaded copy.
-The local machine has no validator. The first actionable startup error and runtime binary
-compatibility remain unresolved until logs are available or the revised Linux run completes.
+The local machine has no validator. The confirmed argument error is fixed in source, but
+startup, loaded-bytecode verification and runtime compatibility remain unverified until the
+revised Linux run completes. Other startup failures, if any, must be diagnosed from that run.
 
 ### NEXT_STEPS
 

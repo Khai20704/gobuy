@@ -112,7 +112,7 @@ async function startValidator(name, selectedPrograms, payer) {
   // Arguments are constructed only from public IDs, local paths and fixed ports.
   // Never record process.env, credentials, CLI wallet configuration or arbitrary user arguments.
   const args = ['--log', '--ledger', ledger, '--bind-address', '127.0.0.1', '--rpc-port', '18899',
-    '--faucet-port', '18901', '--gossip-port', '18898', '--dynamic-port-range', '19000-19020', '--mint', payer];
+    '--faucet-port', '18901', '--gossip-port', '18898', '--dynamic-port-range', '19000-19050', '--mint', payer];
   for (const program of selectedPrograms) args.push('--bpf-program', program.address, program.path);
   activeAttempt = { name, ledger, command: 'solana-test-validator', args,
     logFile: name === 'full' ? 'validator.log' : `${name}-validator.log`,
