@@ -26,6 +26,19 @@ use mandate_rules::{
 use nft_purchase::{
     BuyNftFromMandate, CloseNftPurchaseAuthorization, CreateNftPurchaseAuthorization,
 };
+// Anchor's program macro resolves these generated modules at the crate root, even when
+// the Accounts structs are declared in a child module.
+use nft_purchase::{
+    __client_accounts_buy_nft_from_mandate,
+    __client_accounts_close_nft_purchase_authorization,
+    __client_accounts_create_nft_purchase_authorization,
+};
+#[cfg(feature = "cpi")]
+use nft_purchase::{
+    __cpi_client_accounts_buy_nft_from_mandate,
+    __cpi_client_accounts_close_nft_purchase_authorization,
+    __cpi_client_accounts_create_nft_purchase_authorization,
+};
 use nft_purchase_rules::PurchaseRejection;
 
 // Existing Devnet deployment identity. Source-to-deployed-binary provenance is not yet verified.
@@ -65,7 +78,7 @@ pub mod gobuy_na {
             recipient != ctx.accounts.mandate.key() && recipient != ctx.accounts.vault.key(),
             NaError::InvalidVault
         );
-        let system_program = ctx.accounts.system_program.to_account_info();
+        let system_program = ctx.accounts.system_program.key();
         let rent_floor = Rent::get()?.minimum_balance(0);
         let funding = max_budget_lamports
             .checked_add(rent_floor)
@@ -154,7 +167,7 @@ pub mod gobuy_na {
         let vault_seeds: &[&[u8]] = &[VAULT_SEED, mandate_key.as_ref(), &[vault_bump]];
         transfer(
             CpiContext::new_with_signer(
-                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.system_program.key(),
                 Transfer {
                     from: ctx.accounts.vault.to_account_info(),
                     to: ctx.accounts.recipient.to_account_info(),
@@ -215,7 +228,7 @@ pub mod gobuy_na {
             let vault_seeds: &[&[u8]] = &[VAULT_SEED, mandate_key.as_ref(), &[vault_bump]];
             transfer(
                 CpiContext::new_with_signer(
-                    ctx.accounts.system_program.to_account_info(),
+                    ctx.accounts.system_program.key(),
                     Transfer {
                         from: ctx.accounts.vault.to_account_info(),
                         to: ctx.accounts.owner.to_account_info(),
@@ -259,7 +272,7 @@ pub mod gobuy_na {
             let vault_seeds: &[&[u8]] = &[VAULT_SEED, mandate_key.as_ref(), &[vault_bump]];
             transfer(
                 CpiContext::new_with_signer(
-                    ctx.accounts.system_program.to_account_info(),
+                    ctx.accounts.system_program.key(),
                     Transfer {
                         from: ctx.accounts.vault.to_account_info(),
                         to: ctx.accounts.owner.to_account_info(),

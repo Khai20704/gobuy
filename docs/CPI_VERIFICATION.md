@@ -1,8 +1,8 @@
 # Tensor CPI verification and safe SBF build
 
-Status: the CPI implementation was reviewed account by account and audited against the installed
-official Tensor SDK. One real compile error was found and fixed. The Anchor program has **not**
-been compiled for the SBF target and **no** CPI has been executed. Nothing was deployed, no wallet
+Status: the second GitHub Actions run passed toolchain setup and reached `gobuy_na`, then failed
+with five Rust errors. The fixes below have been applied; a successful SBF build is still
+**not verified**, and **no** CPI has been executed. Nothing was deployed, no wallet
 was used, no SOL was spent and no private key was read or exported.
 
 | Claim | State |
@@ -445,9 +445,43 @@ An explicit installation and executable check prevent silently continuing with a
 Host metadata is checked with `--locked` before SBF compilation, and both compilation and
 host tests use `--locked`. No dependency versions or lockfile entries were changed.
 
-This fix remains **unverified on GitHub Actions** until the updated workflow passes.
+The second GitHub Actions run passed toolchain setup and reached program compilation (reported
+by the user). Full SBF compilation remains **unverified** until the workflow passes.
 Program identity, PDA seeds, CPI, authorization, backend purchasing and completed orders
 are unchanged. No deployment, wallet operation or transaction is part of this fix.
+
+### Step 5: Anchor 1.2.0 compilation errors
+
+The second run reported one E0432 at `#[program]` (original `lib.rs:45`) and four E0308
+errors at CPI constructor arguments (original lines 90, 157, 218 and 262).
+The installed, pinned `anchor-lang-1.2.0` and `anchor-syn-1.2.0` sources were inspected:
+
+* `anchor-syn/src/codegen/program/accounts.rs` emits imports from
+  `crate::__client_accounts_<accounts_struct>`, while the Accounts derive emits these
+  `pub(crate)` modules beside their structs inside `nft_purchase`. Explicit crate-root
+  imports now expose the three NFT generated client modules. Matching generated CPI modules
+  are imported under `#[cfg(feature = "cpi")]`, as required by the program CPI generator.
+  The Accounts structs stay in place; no fields, constraints or instruction names change.
+* `anchor-lang/src/context.rs` defines `CpiContext::new(program_id: Pubkey, accounts: T)`
+  and `new_with_signer(program_id: Pubkey, accounts: T, signer_seeds: ...)`.
+  The four system-program arguments now use `.key()` instead of `.to_account_info()`.
+  Transfer account infos, amounts, signer seeds and checks are unchanged.
+
+Compatibility review: `nft_purchase.rs` and both rule modules are unchanged. BuyLegacy's
+  payer remains the Vault PDA, buyer remains `mandate.owner`, and the recipient remains the
+  owner's canonical ATA. The authorized executor remains the outer `Signer`; only the Vault
+  payer is marked as a CPI signer and signed through `invoke_signed`. Mandate/account layouts,
+  all PDA seeds, Program ID, Tensor ID, authorization and receipt/order derivation are unchanged.
+  No backend, history, dependency, lockfile or workflow changes are needed for this step.
+
+Local verification: all 88 Tensor constant checks and all 13 tests in
+`backend/tests/nftPurchase.test.ts` passed, including authorization, layout, order identity and
+signer checks. The Node tests required a rerun outside the sandbox after its user-profile lookup
+failed before test execution. The linker-free Rust rule-module type-check and `git diff --check`
+also passed. `cargo test --manifest-path anchor/Cargo.toml --all-targets --locked --offline`
+is blocked by missing Windows `link.exe`, before the program can compile. Local SBF tools are
+not installed. These checks do not establish successful Anchor macro expansion or an SBF build;
+the next GitHub Actions run must verify the five fixes. No unsafe workaround was introduced.
 
 It has `permissions: contents: read`, **never** deploys, **never** upgrades, **never** signs a
 transaction, and needs **no** wallet keypair, private key, RPC credential or repository secret. Only
