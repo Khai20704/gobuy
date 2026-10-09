@@ -54,7 +54,7 @@ async function save(name, value) {
 }
 async function rpc(url, method, params = [], timeoutMs = 30000) {
   const allowed = url === REMOTE ? ['getAccountInfo']
-    : url === LOCAL ? ['getHealth', 'getAccountInfo', 'getLatestBlockhash', 'simulateTransaction', 'getGenesisHash'] : [];
+    : url === LOCAL ? ['getHealth', 'getSlot', 'getAccountInfo', 'getLatestBlockhash', 'simulateTransaction', 'getGenesisHash'] : [];
   if (!allowed.includes(method)) throw new Error(`RPC method or endpoint forbidden: ${method}`);
   const response = await fetch(url, {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -220,26 +220,46 @@ try {
     report.validatorStarted = true;
     report.genesisHash = await rpc(LOCAL, 'getGenesisHash');
     report.loadedPrograms = [];
+    let minimumExecutionSlot = 1;
     for (const { address, sha256 } of selected) {
       const loaded = await rpc(LOCAL, 'getAccountInfo', [address, { encoding: 'base64' }]);
       if (!loaded.value?.executable) throw new Error(`Program not executable locally: ${address}`);
       await save(`local-${address}.json`, loaded);
       let bytes = Buffer.from(loaded.value.data[0], 'base64');
+      let localDeploymentSlot = null;
       if (loaded.value.owner === LOADER) {
         if (bytes.length !== 36 || bytes.readUInt32LE(0) !== 2) throw new Error(`Invalid local program pointer: ${address}`);
         const data = await rpc(LOCAL, 'getAccountInfo', [encode(bytes.subarray(4)), { encoding: 'base64' }]);
         if (data.value?.owner !== LOADER) throw new Error(`Invalid local ProgramData owner: ${address}`);
         bytes = Buffer.from(data.value.data[0], 'base64');
         if (bytes.readUInt32LE(0) !== 3) throw new Error(`Invalid local ProgramData: ${address}`);
+        localDeploymentSlot = Number(bytes.readBigUInt64LE(4));
+        if (!Number.isSafeInteger(localDeploymentSlot)) throw new Error('Unsafe local deployment slot');
+        minimumExecutionSlot = Math.max(minimumExecutionSlot, localDeploymentSlot + 1);
         bytes = bytes.subarray(45);
       } else if (loaded.value.owner !== 'BPFLoader2111111111111111111111111111111111') {
         throw new Error(`Unexpected local loader: ${address}`);
       }
       if (hash(bytes) !== sha256) throw new Error(`Local bytecode hash mismatch: ${address}`);
-      report.loadedPrograms.push({ address, sha256, executable: true, loader: loaded.value.owner });
+      report.loadedPrograms.push({ address, sha256, executable: true, loader: loaded.value.owner, localDeploymentSlot });
     }
     report.genuineProgramsLoaded = true;
-    const blockhash = (await rpc(LOCAL, 'getLatestBlockhash')).value.blockhash;
+    // Agave delays program visibility by one slot. Healthy RPC and executable accounts
+    // at genesis slot 0 do not establish that the confirmed bank can execute them.
+    report.programReadiness = { minimumExecutionSlot, commitment: 'confirmed', observations: [], ready: false };
+    const readinessDeadline = Date.now() + 60000;
+    while (Date.now() < readinessDeadline) {
+      if (validator.exitCode !== null || validator.signalCode !== null) throw new Error('Validator exited while waiting for program visibility');
+      const slot = await rpc(LOCAL, 'getSlot', [{ commitment: 'confirmed' }], 2000);
+      if (!Number.isSafeInteger(slot) || slot < 0) throw new Error('Invalid confirmed slot');
+      report.programReadiness.observations.push({ at: new Date().toISOString(), slot });
+      if (slot >= minimumExecutionSlot) { report.programReadiness.ready = true; break; }
+      await delay(250);
+    }
+    await save('program-readiness.json', report.programReadiness);
+    if (!report.programReadiness.ready) throw new Error('Confirmed bank did not advance beyond local program deployment slots within 60 seconds');
+    const blockhashResponse = await rpc(LOCAL, 'getLatestBlockhash', [{ commitment: 'confirmed', minContextSlot: minimumExecutionSlot }]);
+    const blockhash = blockhashResponse.value.blockhash;
     const data = Buffer.alloc(18);
     Buffer.from('447f2b08d41ff972', 'hex').copy(data);
     data.writeBigUInt64LE(1n, 8);
@@ -247,13 +267,55 @@ try {
     // Expected Anchor account-validation failure establishes dispatch only, never a purchase.
     const transaction = Buffer.concat([Buffer.from([1]), Buffer.alloc(64), Buffer.from([1, 0, 1, 2]),
       payerBytes, decode(programs.tensor), decode(blockhash), Buffer.from([1, 1, 0, data.length]), data]);
-    const simulation = await rpc(LOCAL, 'simulateTransaction', [transaction.toString('base64'), {
+    const simulationConfig = {
       encoding: 'base64', sigVerify: false, commitment: 'confirmed',
-    }]);
+      replaceRecentBlockhash: true, innerInstructions: true,
+      minContextSlot: minimumExecutionSlot,
+    };
+    report.dispatchProbe = { status: 'PREPARED', broadcast: false, signature: null,
+      note: 'Unsigned simulation; zero signature bytes are not a transaction signature',
+      programId: programs.tensor, payer, instructionDataHex: data.toString('hex'),
+      instructionAccounts: [], blockhashResponse, simulationConfig };
+    await save('buy-legacy-dispatch-request.json', { ...report.dispatchProbe,
+      transactionBase64: transaction.toString('base64') });
+    await save('report.json', report);
+    let simulation;
+    try {
+      report.dispatchProbe.status = 'RPC_REQUEST_ATTEMPTED';
+      simulation = await rpc(LOCAL, 'simulateTransaction', [transaction.toString('base64'), simulationConfig]);
+    } catch (error) {
+      report.dispatchProbe.status = 'RPC_FAILED_EXECUTION_UNKNOWN';
+      report.dispatchProbe.rpcError = error.message;
+      await save('buy-legacy-dispatch-evidence.json', report.dispatchProbe);
+      throw error;
+    }
     await save('buy-legacy-dispatch-simulation.json', simulation);
-    if (!simulation.value.err || !simulation.value.logs?.some(line => line.includes('Instruction: BuyLegacy'))
-      || !simulation.value.logs.some(line => line.includes('AccountNotEnoughKeys'))) {
-      throw new Error('Expected genuine BuyLegacy dispatch/account-validation evidence missing');
+    const logs = simulation.value.logs ?? [];
+    const invocationIndex = logs.indexOf(`Program ${programs.tensor} invoke [1]`);
+    const failureIndex = logs.findIndex((line, index) => index > invocationIndex
+      && line.startsWith(`Program ${programs.tensor} failed:`));
+    const scoped = invocationIndex >= 0 && failureIndex > invocationIndex
+      ? logs.slice(invocationIndex + 1, failureIndex) : [];
+    const instructionError = simulation.value.err?.InstructionError;
+    const checks = {
+      tensorInvoked: invocationIndex >= 0,
+      tensorFailed: failureIndex > invocationIndex && invocationIndex >= 0,
+      buyLegacyDispatched: scoped.includes('Program log: Instruction: BuyLegacy'),
+      missingAccountsLogged: scoped.some(line => line.includes('Error Code: AccountNotEnoughKeys.')),
+      expectedInstructionError: Array.isArray(instructionError) && instructionError[0] === 0
+        && instructionError[1]?.Custom === 3005,
+    };
+    Object.assign(report.dispatchProbe, { status: Object.values(checks).every(Boolean)
+      ? 'VERIFIED_ACCOUNT_VALIDATION_FAILURE'
+      : checks.tensorInvoked ? 'INVOKED_EXPECTED_DISPATCH_NOT_VERIFIED' : 'NO_TENSOR_INVOCATION_EVIDENCE',
+    checks, context: simulation.context, err: simulation.value.err,
+    returnData: simulation.value.returnData ?? null, unitsConsumed: simulation.value.unitsConsumed ?? null,
+    logs, innerInstructions: simulation.value.innerInstructions ?? null,
+    replacementBlockhash: simulation.value.replacementBlockhash ?? null });
+    await save('buy-legacy-dispatch-evidence.json', report.dispatchProbe);
+    await writeFile(join(out, 'buy-legacy-dispatch.log'), logs.join('\n') + '\n');
+    if (!Object.values(checks).every(Boolean)) {
+      throw new Error(`BuyLegacy dispatch probe ${report.dispatchProbe.status}: ${JSON.stringify(simulation.value.err)}; see buy-legacy-dispatch-simulation.json`);
     }
     report.availability = 'LOCAL_BUY_LEGACY_DISPATCH_VERIFIED';
     report.tensorDispatchExecuted = true;

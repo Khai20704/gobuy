@@ -1,5 +1,97 @@
 # Step 7: real GoBuy to Tensor CPI tests
 
+## Latest dispatch-gate investigation
+
+### Resolved with supplied simulation evidence
+
+The user supplied the actual response, now preserved as
+[failed-slot-zero-dispatch.json](evidence/step7/failed-slot-zero-dispatch.json):
+
+```text
+context.slot: 0
+InstructionError: [0, "UnsupportedProgramId"]
+Program TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp invoke [1]
+Program is not deployed
+Program TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp failed: Unsupported program id
+unitsConsumed: 0
+returnData: null
+```
+
+**Cause: the probe ran against the genesis bank before program visibility.** Runtime
+invocation was attempted, but BuyLegacy never dispatched; the invocation line alone is not
+execution proof. The bank was slot 0. Agave v3.0.14's genesis loader assigns local
+ProgramData deployment slot 0, while its
+[program cache](https://github.com/anza-xyz/agave/blob/v3.0.14/program-runtime/src/loaded_programs.rs)
+defines a one-slot visibility delay. The harness treated RPC health plus executable/hash
+checks as execution readiness. Those checks can pass before the bank advances. This is
+not evidence of a wrong Tensor ID or a missing ELF; it is also not BlockhashNotFound.
+
+Fix: read each **local** ProgramData deployment slot during existing bytecode verification,
+wait up to 60 seconds for the confirmed bank to reach the maximum deployment slot plus one,
+and pass that minimum context slot to blockhash acquisition and simulation. Remote deployment
+slots are deliberately not used. Record observations in `program-readiness.json` and fail
+closed on timeout/validator exit. The strict dispatch evidence checks remain unchanged.
+No program bytes, features, IDs, seeds or purchasing behavior are modified.
+
+The new change affects `scripts/tensor-local-preflight.mjs`, this report and the preserved
+failure JSON, in addition to the earlier uncommitted diagnostic/workflow edits below.
+Syntax, workflow YAML, seven synthetic evidence-gate checks and diff checks passed.
+**Linux verification still required:** no successful dispatch or purchase is claimed.
+
+The following records the earlier investigation before the response became available:
+
+Run **37974427649**, commit `a674f2a34d241b60911504e2122b5c8f76080cba`, failed
+(public GitHub API verified). The user confirms validator startup and all bytecode checks
+passed, but the probe raised `Expected genuine BuyLegacy dispatch/account-validation evidence missing`.
+Full GoBuy CPI purchase did not execute. The implementation report below predates this run.
+
+**Exact runtime root cause: not yet established.** Artifact `11636589925` exists, but its
+unauthenticated download returned HTTP 401. No local copy of the latest simulation response
+was found. The generic error alone cannot distinguish a blockhash/account-loading failure,
+a Tensor execution error, or unexpected logs. The missing `value.err` and `value.logs`
+were requested from the user; no runtime logs are fabricated here.
+
+The control flow does establish that the local `simulateTransaction` request returned and
+`buy-legacy-dispatch-simulation.json` was saved before that exact error was thrown. Thus this
+was not merely instruction construction or a never-attempted RPC call. It does **not** establish
+that Tensor was invoked: a simulation response can contain a transaction-level failure and
+no program logs. The flag remained false because the response failed the old checks for a
+non-null error, BuyLegacy log and AccountNotEnoughKeys log. The E2E module is called only
+after those checks and the flag assignment, so the purchase suite was not reached.
+
+Changes prepared for the next run:
+
+- `scripts/tensor-local-preflight.mjs`: records the exact simulation request, public payer,
+  payload, blockhash/context/options, RPC failures and full response, with a readable log.
+  Evidence includes instruction error, return data, compute units, replacement blockhash
+  and inner instructions. The probe is unsigned and never broadcast; its signature field
+  is explicitly null, not the zero-filled placeholder interpreted as a real signature.
+- The evidence gate now requires the exact Tensor `invoke [1]` line, BuyLegacy and named
+  missing-account logs inside that invocation's failure boundary, and instruction 0's
+  `Custom: 3005` error. Unexpected success, other programs, missing logs and other errors
+  fail closed. `tensorDispatchExecuted` is assigned only after every check passes.
+- Blockhash acquisition now uses the same `confirmed` commitment as simulation, and unsigned
+  simulation requests `replaceRecentBlockhash: true`, as supported by the
+  [Solana RPC specification](https://solana.com/docs/rpc/http/simulatetransaction).
+  This removes a blockhash timing dependency; **BlockhashNotFound is a hypothesis, not the
+  confirmed cause of this run**. No retry or broad error acceptance hides other failures.
+- `.github/workflows/tensor-integration.yml`: prints dispatch evidence and logs on failure;
+  the existing always-upload patterns already preserve these files.
+- `docs/TENSOR_INTEGRATION_STEP7.md`: records this investigation and verification limits.
+
+Local checks: seven synthetic evidence-gate unit cases passed (expected validation, missing
+blockhash, missing invocation, wrong error, unexpected success, wrong program and null logs).
+These are parser/control-flow tests, **not genuine Tensor execution**. Both script syntax
+checks, workflow YAML/opt-in/always-upload checks and `git diff --check` passed.
+The E2E harness, Rust source, program IDs, seeds, wallet logic and Anchor CI were not changed
+by this investigation. No deployment or purchase occurred.
+
+**Remaining blocker / next action:** provide the failed run's
+`buy-legacy-dispatch-simulation.json`, or publish these diagnostics and start a new Linux
+workflow run. Inspect `buy-legacy-dispatch-evidence.json` and the raw response to identify
+the actual first error. The fix remains unverified in CI; no Tensor dispatch, NFT delivery,
+Vault payment, receipt or negative-test success is claimed for this failed run.
+
 **STEP7_STATUS: BLOCKED — implemented, not executed on a validator.**
 No purchase, delivery, Vault payment or authorization/receipt outcome is verified by this work.
 
