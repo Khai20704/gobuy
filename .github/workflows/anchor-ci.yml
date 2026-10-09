@@ -99,19 +99,22 @@ jobs:
             --manifest-path anchor/programs/gobuy_na/Cargo.toml \
             --sbf-out-dir anchor/target/deploy -- --locked 2>&1 | tee build-logs/cargo-build-sbf.log
 
-      - name: Record the actual SBF Cargo selection and check the lockfile
+      - name: Record installed SBF executables and check the lockfile
         if: always()
         run: |
           set -euo pipefail
           mkdir -p build-logs
           {
             sbf_bin="$HOME/.cache/solana/$SBF_TOOLS_VERSION/platform-tools/rust/bin"
-            sbf_rust_version=$("$sbf_bin/rustc" --version | awk '{print $2}' | cut -d- -f1)
-            sbf_toolchain="${sbf_rust_version}-sbpf-solana-${SBF_TOOLS_VERSION}"
-            echo "SBF rustup toolchain: $sbf_toolchain"
-            actual_cargo=$(rustup which --toolchain "$sbf_toolchain" cargo)
-            echo "Actual SBF Cargo executable: $actual_cargo"
-            test "$(readlink -f "$actual_cargo")" = "$(readlink -f "$sbf_bin/cargo")"
+            # Inspect the pinned binaries directly; do not infer a rustup registration name.
+            echo "SBF platform-tools: $SBF_TOOLS_VERSION"
+            test -x "$sbf_bin/rustc"
+            test -x "$sbf_bin/cargo"
+            actual_rustc=$(readlink -f "$sbf_bin/rustc")
+            actual_cargo=$(readlink -f "$sbf_bin/cargo")
+            echo "Installed SBF Rust executable: $actual_rustc"
+            echo "Installed SBF Cargo executable: $actual_cargo"
+            "$actual_rustc" --version
             "$actual_cargo" --version
           } 2>&1 | tee build-logs/sbf-cargo-selection.log
           git diff --exit-code -- anchor/Cargo.lock
