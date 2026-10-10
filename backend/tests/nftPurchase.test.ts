@@ -14,7 +14,8 @@ import { buyNftFromMandateInstruction, createNftPurchaseAuthorizationInstruction
 import { orderIdFor, orderIdHex, isValidOrderIdHex } from '../src/services/nft-purchase/orderIdentity.js'
 import { assertTensorBuyLegacyInstruction, tensorRemainingAccounts, IX_BUYER, IX_BUYER_TA, IX_LIST_STATE,
   IX_MINT, IX_PAYER, IX_SELLER } from '../src/services/nft-purchase/tensorBuyLegacyLayout.js'
-import { nftPurchaseLiveEnabled } from '../src/services/nft-purchase/NftPurchaseService.js'
+import { NftPurchaseService, nftPurchaseLiveEnabled, type NftPurchaseOrder } from '../src/services/nft-purchase/NftPurchaseService.js'
+import type { AssetStore } from '../src/persistence/AssetStore.js'
 import { demoAutoPurchaseEnabled } from '../src/services/acquisition/AutonomousPurchaseService.js'
 import { NFT_PURCHASE_DELIVERY_MODE } from '../src/http/routes/nftPurchase.js'
 
@@ -77,6 +78,37 @@ function buyLegacyInstruction(overrides: { payer?: string; price?: bigint; data?
 
 const expectations = () => ({ payer: vaultKey.toBase58(), buyer: OWNER, buyerTokenAccount: OWNER,
   mint: MINT, listState: LISTING, seller: SELLER, priceLamports: PRICE })
+
+test('Tensor creator royalty accounts survive validation and CPI account conversion', () => {
+  const instruction = buyLegacyInstruction()
+  instruction.accounts.push({ address: SELLER, isSigner: false, isWritable: true })
+  assert.doesNotThrow(() => assertTensorBuyLegacyInstruction(instruction, expectations()))
+  assert.equal(tensorRemainingAccounts(instruction).length, 25)
+  assert.equal(tensorRemainingAccounts(instruction)[24].pubkey.toBase58(), SELLER)
+  instruction.accounts[24].isSigner = true
+  assert.throws(() => assertTensorBuyLegacyInstruction(instruction, expectations()))
+  instruction.accounts[24].isSigner = false
+  instruction.accounts[24].isWritable = false
+  assert.throws(() => assertTensorBuyLegacyInstruction(instruction, expectations()))
+  instruction.accounts[24].isWritable = true
+  instruction.accounts.push(...Array.from({ length: 5 }, () => ({ address: SELLER, isSigner: false, isWritable: true })))
+  assert.throws(() => assertTensorBuyLegacyInstruction(instruction, expectations()))
+})
+
+test('status closes a missing attempt atomically without RPC or broadcasting', async () => {
+  let stored: NftPurchaseOrder | undefined
+  const orders: AssetStore<NftPurchaseOrder> = {
+    get: async () => stored,
+    put: async (_user, _id, value, once) => { assert.equal(once, true); stored ??= value },
+    list: async () => [], take: async () => undefined,
+  }
+  const service = new NftPurchaseService(() => { throw new Error('RPC must not run') }, undefined, undefined, orders)
+  const result = await service.status('user', DISCOVERY)
+  assert.equal(result.status, 'FAILED')
+  assert.equal(result.signature, null)
+  assert.equal(stored?.attempts, 0)
+  assert.deepEqual(await service.status('user', DISCOVERY), result)
+})
 
 test('the order id is stable, 16 bytes, and derived only from the discovery', () => {
   assert.equal(orderIdFor(DISCOVERY).length, 16)

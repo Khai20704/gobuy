@@ -8,7 +8,8 @@ import type { TensorBuyInstruction } from '@gobuy/tensor-adapter'
  * The verified Tensor BuyLegacy account layout.
  *
  * Decoded from the installed, official SDK `@tensor-foundation/marketplace@1.0.0`: a live dump of
- * `getBuyLegacyInstruction` shows exactly 24 accounts in this order, with the marketplace program
+ * `getBuyLegacyInstruction` has 24 fixed accounts in this order, followed by creator royalty
+ * accounts when metadata defines them, with the marketplace program
  * id itself used as the sentinel for every absent optional account. Only index 7 (`payer`) is a
  * signer, and only index 1 (`buyer`) receives the NFT (through index 2, its associated account).
  *
@@ -68,14 +69,14 @@ function reject(reason: string): never {
 }
 
 /**
- * Fails closed unless the SDK returned exactly the verified BuyLegacy shape for this order.
+ * Fails closed unless the SDK returned the verified BuyLegacy prefix and optional creators.
  * Any drift in the SDK, a different program, a swapped payer/buyer or a changed price is refused
  * before a transaction is built.
  */
 export function assertTensorBuyLegacyInstruction(instruction: TensorBuyInstruction,
   expected: TensorBuyExpectations): void {
   if (instruction.programAddress !== TENSOR_MARKETPLACE_PROGRAM_ID) reject('NETWORK_MISMATCH')
-  if (instruction.accounts.length !== TENSOR_BUY_LEGACY_ACCOUNTS) reject('LISTING_UNAVAILABLE')
+  assertAccountCount(instruction)
   const hex = Buffer.from(instruction.data.subarray(0, 8)).toString('hex')
   if (hex !== TENSOR_BUY_LEGACY_DISCRIMINATOR) reject('LISTING_UNAVAILABLE')
   if (instruction.data.length !== TENSOR_BUY_LEGACY_DATA_LENGTH) reject('LISTING_UNAVAILABLE')
@@ -100,7 +101,7 @@ export function assertTensorBuyLegacyInstruction(instruction: TensorBuyInstructi
  * `invoke_signed` using the vault seeds.
  */
 export function tensorRemainingAccounts(instruction: TensorBuyInstruction) {
-  if (instruction.accounts.length !== TENSOR_BUY_LEGACY_ACCOUNTS) reject('LISTING_UNAVAILABLE')
+  assertAccountCount(instruction)
   return instruction.accounts.map(account => ({
     pubkey: new PublicKey(account.address),
     isSigner: false,
@@ -110,4 +111,14 @@ export function tensorRemainingAccounts(instruction: TensorBuyInstruction) {
     // than the outer transaction granted.
     isWritable: account.isWritable,
   }))
+}
+
+// Metaplex metadata supports up to five creators. Tensor appends their royalty accounts
+// after the fixed 24-account prefix; they must remain writable, non-signing accounts.
+function assertAccountCount(instruction: TensorBuyInstruction) {
+  if (instruction.accounts.length < TENSOR_BUY_LEGACY_ACCOUNTS
+    || instruction.accounts.length > TENSOR_BUY_LEGACY_ACCOUNTS + 5) reject('LISTING_UNAVAILABLE')
+  for (const account of instruction.accounts.slice(TENSOR_BUY_LEGACY_ACCOUNTS)) {
+    if (account.isSigner || !account.isWritable) reject('POLICY_REJECTED')
+  }
 }

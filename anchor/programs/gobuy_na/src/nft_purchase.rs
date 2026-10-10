@@ -282,7 +282,8 @@ pub fn buy_nft_from_mandate(
     let buyer_token_account = associated_token_address(&owner_key, &expected_mint)?;
     let remaining = ctx.remaining_accounts;
     require!(
-        remaining.len() >= rules::BUY_LEGACY_ACCOUNTS,
+        remaining.len() >= rules::BUY_LEGACY_ACCOUNTS
+            && remaining.len() <= rules::BUY_LEGACY_ACCOUNTS + 5,
         NaError::InvalidTensorAccounts
     );
     let mut keys: Vec<[u8; 32]> = Vec::with_capacity(rules::BUY_LEGACY_ACCOUNTS);
@@ -299,8 +300,10 @@ pub fn buy_nft_from_mandate(
     rules::check_tensor_accounts(&keys, &expectations).map_err(NaError::from)?;
 
     // The vault pays: `payer` is signed with the vault PDA seeds through invoke_signed.
-    let mut metas: Vec<AccountMeta> = Vec::with_capacity(rules::BUY_LEGACY_ACCOUNTS);
-    for (index, account) in remaining.iter().take(rules::BUY_LEGACY_ACCOUNTS).enumerate() {
+    // Tensor validates the trailing royalty recipients against NFT metadata.
+    // Preserve these creator accounts instead of truncating the CPI to its fixed prefix.
+    let mut metas: Vec<AccountMeta> = Vec::with_capacity(remaining.len());
+    for (index, account) in remaining.iter().enumerate() {
         let is_signer = index == rules::IX_PAYER;
         if account.is_writable {
             metas.push(AccountMeta::new(*account.key, is_signer));
@@ -313,7 +316,7 @@ pub fn buy_nft_from_mandate(
         accounts: metas,
         data: rules::buy_legacy_data(max_price_lamports),
     };
-    let account_infos = &remaining[..rules::BUY_LEGACY_ACCOUNTS];
+    let account_infos = remaining;
     let vault_seeds: &[&[u8]] = &[VAULT_SEED, mandate_key.as_ref(), &[vault_bump]];
     let vault_before = ctx.accounts.vault.lamports();
     invoke_signed(&instruction, account_infos, &[vault_seeds])?;

@@ -107,12 +107,27 @@ export class NftPurchaseService {
 
   /** Read-only view of one attempt. A confirmed order is never re-submitted. */
   async status(userId: string, discoveryId: string): Promise<NftPurchaseResult> {
-    const order = await this.orders.get(userId, discoveryId)
-    if (!order) throw new InputError('Không tìm thấy đơn mua NFT gốc của tài khoản này.')
+    let order = await this.orders.get(userId, discoveryId)
+    if (!order) {
+      // Atomically close an absent attempt. A concurrent preflight cannot reserve this id
+      // afterwards, while an already reserved/submitted order wins and must be reconciled.
+      const absent = PublicKey.default.toBase58()
+      const now = new Date().toISOString()
+      await this.orders.put(userId, discoveryId, {
+        orderId: orderIdFor(discoveryId).toString('hex'), discoveryId, owner: absent,
+        mint: absent, listing: absent, seller: absent, priceLamports: '0', maxTotalDebitLamports: '0',
+        receiptAddress: absent, status: 'FAILED', signature: null, attempts: 0,
+        createdAt: now, updatedAt: now,
+        message: 'Yêu cầu trước chưa tạo giao dịch mua NFT và đã được đóng. Bạn có thể tìm lại NFT để mua.',
+      }, true)
+      order = await this.orders.get(userId, discoveryId)
+      if (!order) throw new InputError('Chưa xác minh được trạng thái đơn. Kiểm tra lại sau.')
+    }
     return this.reconcile(userId, order)
   }
 
   private async reconcile(userId: string, order: NftPurchaseOrder): Promise<NftPurchaseResult> {
+    if (order.status === 'FAILED' && !order.signature && order.attempts === 0) return this.result(order, null)
     const client = this.client()
     await assertDevnet(client.connection, { network: 'devnet', rpcUrl: client.connection.rpcEndpoint })
     const address = new PublicKey(order.receiptAddress)
@@ -247,8 +262,13 @@ export class NftPurchaseService {
         message: 'Không có listing Tensor Devnet khả dụng cho mint này ngay bây giờ. Chưa tạo giao dịch; hãy tìm lại sau.' })
     }
     const buyerTokenAccount = getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(mandate.owner))
-    assertTensorBuyLegacyInstruction(tensor, { payer: vault.toBase58(), buyer: mandate.owner,
-      buyerTokenAccount: buyerTokenAccount.toBase58(), mint, listState: listing, seller, priceLamports: price })
+    try {
+      assertTensorBuyLegacyInstruction(tensor, { payer: vault.toBase58(), buyer: mandate.owner,
+        buyerTokenAccount: buyerTokenAccount.toBase58(), mint, listState: listing, seller, priceLamports: price })
+    } catch {
+      return this.blocked({ ...base, status: 'NO_EXECUTABLE_LISTING',
+        message: 'Listing Tensor đã thay đổi hoặc có cấu trúc chưa được hỗ trợ. Chưa tạo giao dịch; hãy tìm lại NFT.' })
+    }
     if (tensor.accounts[IX_BUYER_TA].address !== buyerTokenAccount.toBase58()) {
       throw new InputError('Tensor trả về tài khoản nhận NFT không phải ATA của chủ mandate. Na từ chối giao dịch.')
     }
