@@ -4,7 +4,7 @@ import { accountFetch } from '../../account/firebase'
 import { explorerTx } from '../../../services/solana/links'
 import './requestHistory.css'
 
-const statusLabel: Record<NaRequest['status'], string> = {
+export const statusLabel: Record<NaRequest['status'], string> = {
   PROCESSING: 'Đang xử lý',
   NEEDS_INPUT: 'Cần thêm thông tin',
   NO_MATCH: 'Không tìm thấy món phù hợp',

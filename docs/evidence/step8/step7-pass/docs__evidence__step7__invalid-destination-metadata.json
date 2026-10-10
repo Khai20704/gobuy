@@ -1,0 +1,34 @@
+{
+  "key": 4,
+  "updateAuthority": "4DiDfoQgK8AEkBGByLByZc7AWMDwMTzw1qk6DuLFtLri",
+  "mint": "AC6mTWdxuvshZojkefyXyLhfdJ8nNuUQJBL6kCCAFS2G",
+  "name": "GoBuy local original",
+  "symbol": "GBTEST",
+  "uri": "https://example.invalid/gobuy-local-test.json",
+  "sellerFeeBasisPoints": 0,
+  "creators": {
+    "__option": "None"
+  },
+  "primarySaleHappened": false,
+  "isMutable": true,
+  "editionNonce": {
+    "__option": "Some",
+    "value": 252
+  },
+  "tokenStandard": {
+    "__option": "Some",
+    "value": 0
+  },
+  "collection": {
+    "__option": "None"
+  },
+  "uses": {
+    "__option": "None"
+  },
+  "collectionDetails": {
+    "__option": "None"
+  },
+  "programmableConfig": {
+    "__option": "None"
+  }
+}

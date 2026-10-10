@@ -1,0 +1,72 @@
+{
+  "debit": "104039280",
+  "price": "100000000",
+  "tensorFee": "2000000",
+  "ataRent": "2039280",
+  "executorTransactionFee": 5000,
+  "receiptRent": "2797920",
+  "receiptCount": 1,
+  "cpi": {
+    "signature": "5rZuLByBCWjVojS7twz74Fjrg7rQikR7z1EFBrCUHWPmKKbbPrWUGp3wtsGnwqca1gS2rq41Yhmw4DcsYAVjj1Ca",
+    "payer": "6cjUGy5TrHWYeqiJQszQxutHYWE3ZkZSHAEqFyVuZiDi",
+    "buyer": "4mQpqGgJZExYqrK7ZWfRxuAZ2uEoEFQC3ruCDUHFGD7w",
+    "originalMint": "HVT5HUf9mmqvtwMjpQzJzUB6Nb6exumabw4sKkc5shny",
+    "signers": [
+      "769Vy6WqWRThQ1tZrgyBgVWXuoZNrMrWkMdwtgpkiqF4"
+    ],
+    "instruction": {
+      "accounts": [
+        6,
+        12,
+        10,
+        8,
+        5,
+        18,
+        3,
+        4,
+        21,
+        21,
+        3,
+        22,
+        14,
+        21,
+        11,
+        9,
+        13,
+        21,
+        21,
+        21,
+        15,
+        19,
+        20,
+        21
+      ],
+      "data": "3qnGEUcRWqJPkbkbdzxmhfMEF",
+      "programIdIndex": 21,
+      "stackHeight": 2
+    },
+    "evidence": "007-valid-purchase-transaction.json"
+  },
+  "payments": [
+    {
+      "from": "6cjUGy5TrHWYeqiJQszQxutHYWE3ZkZSHAEqFyVuZiDi",
+      "to": "DoBFNd1XuFTNrw2HxzJgUJkM5k2tpFynHMmjMHhnNX5P",
+      "amount": "1000000"
+    },
+    {
+      "from": "6cjUGy5TrHWYeqiJQszQxutHYWE3ZkZSHAEqFyVuZiDi",
+      "to": "DoBFNd1XuFTNrw2HxzJgUJkM5k2tpFynHMmjMHhnNX5P",
+      "amount": "800000"
+    },
+    {
+      "from": "6cjUGy5TrHWYeqiJQszQxutHYWE3ZkZSHAEqFyVuZiDi",
+      "to": "DoBFNd1XuFTNrw2HxzJgUJkM5k2tpFynHMmjMHhnNX5P",
+      "amount": "200000"
+    },
+    {
+      "from": "6cjUGy5TrHWYeqiJQszQxutHYWE3ZkZSHAEqFyVuZiDi",
+      "to": "5WVb76yWWqV8U2kvxCv6iQufnMPMJhn3unpko2A2a1vX",
+      "amount": "100000000"
+    }
+  ]
+}

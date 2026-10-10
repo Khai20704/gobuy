@@ -112,7 +112,7 @@ export class AcquisitionService {
             : 'Không tìm thấy listing phù hợp trong phạm vi dữ liệu marketplace đã kiểm tra. Điều này không có nghĩa NFT đó không tồn tại. Chưa tạo giao dịch.'
       : selectedCandidate ? intent.action === 'BUY'
       ? selectedCandidate.provider === 'tensor'
-        ? `${rarityCaveat}Na đã chọn listing Tensor Devnet và xác minh NFT qua Helius. Đang kiểm tra listing và mandate để thực hiện Devnet autonomous spend demo bằng Na Agent. Đây chưa phải mua NFT hoàn chỉnh và không xác nhận giá trị đầu tư.`
+        ? `${rarityCaveat}Na đã chọn listing Tensor Devnet và xác minh NFT qua Helius. Bước tiếp theo là mua NFT gốc: Na kiểm tra lại listing và mandate, rồi bạn ký giao dịch Tensor bằng Phantom. Chưa có giao dịch nào được gửi và chưa xác nhận giá trị đầu tư.`
         : `${rarityCaveat}PURCHASE yêu cầu listing Tensor Devnet hợp lệ và mandate ACTIVE. Không dùng Phantom làm phương án thay thế khi thực thi bị chặn.`
       : `${rarityCaveat}Na đã chọn một NFT phù hợp nhất trong dữ liệu đã kiểm tra. Đây là đề xuất duy nhất; bạn có thể yêu cầu Na tìm lựa chọn khác.`
       : intent.excludedMints.length ? 'Không tìm thấy lựa chọn khác đủ điều kiện trong ngân sách và dữ liệu đã kiểm tra. Chưa tạo giao dịch.'

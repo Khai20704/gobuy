@@ -15,7 +15,7 @@
     "dev:backend": "npm run dev -w backend",
     "build": "npm run build -w shared && npm run build -w backend && npm run build -w frontend && npm run build -w extension",
     "lint": "npm run build -w shared && npm run lint --workspaces --if-present && tsc -p tsconfig.tests.json",
-    "test": "npm run build -w shared && npm run build -w @gobuy/tensor-adapter && node --import tsx --test shared/tests/*.test.ts backend/tests/*.test.ts frontend/tests/*.test.ts extension/tests/*.test.ts",
+    "test": "npm run build -w shared && npm run build -w @gobuy/tensor-adapter && node --import tsx --test tensor-adapter/tests/*.test.mjs shared/tests/*.test.ts backend/tests/*.test.ts frontend/tests/*.test.ts extension/tests/*.test.ts",
     "test:anchor": "cargo test --manifest-path anchor/Cargo.toml",
     "verify:tensor-constants": "node scripts/verify-tensor-constants.mjs",
     "typecheck:anchor-rules": "rustc --edition 2021 --crate-type bin --emit=metadata -o .tmp-anchor-rules.rmeta anchor/host-typecheck/main.rs",

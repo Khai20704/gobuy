@@ -1,0 +1,29 @@
+{
+  "feePayer": "FPzTq82DAgnUXN6wFdidrfNvyik6873bLig9hjzbGhDg",
+  "signers": [
+    "FPzTq82DAgnUXN6wFdidrfNvyik6873bLig9hjzbGhDg"
+  ],
+  "instructions": [
+    {
+      "programId": "ComputeBudget111111111111111111111111111111",
+      "data": "0219420f00",
+      "accounts": []
+    },
+    {
+      "programId": "11111111111111111111111111111111",
+      "data": "0200000000980d0000000000",
+      "accounts": [
+        {
+          "address": "FPzTq82DAgnUXN6wFdidrfNvyik6873bLig9hjzbGhDg",
+          "isSigner": true,
+          "isWritable": true
+        },
+        {
+          "address": "GuTJHwybrPidSu7G17FdU7M7BiQYT2i77VB9CDjEZV5W",
+          "isSigner": false,
+          "isWritable": true
+        }
+      ]
+    }
+  ]
+}

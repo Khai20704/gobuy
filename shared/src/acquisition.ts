@@ -87,16 +87,25 @@ export const discoverySourceSchema = z.object({
   status: z.enum(['AVAILABLE', 'UNAVAILABLE']),
   code: z.enum(['AUTHENTICATION_FAILED', 'ACCESS_FORBIDDEN', 'RATE_LIMITED', 'PROVIDER_UNAVAILABLE',
     'INVALID_RESPONSE', 'RESPONSE_TOO_LARGE', 'TIMEOUT', 'NO_DATA', 'DISABLED', 'AUTH_REQUIRED',
-    'NETWORK_ERROR', 'SCHEMA_MISMATCH', 'NO_MATCH']).optional(),
+    'NETWORK_ERROR', 'SCHEMA_MISMATCH', 'NO_MATCH', 'RPC_UNSUPPORTED']).optional(),
   httpStatus: z.number().int().min(100).max(599).optional(),
 })
+/**
+ * Per-operation diagnostics.
+ *
+ * `endpoint` is optional and must stay optional: RPC endpoints carry API keys in their query string,
+ * so a diagnostic that requires one pressures callers into logging credentials. Operation names,
+ * counts, timings and constant failure categories are the log-safe subset.
+ */
 export const nftProviderDiagnosticSchema = z.object({
-  provider: z.string().min(1).max(60), endpoint: z.string().min(1).max(300),
+  provider: z.string().min(1).max(60), endpoint: z.string().min(1).max(300).optional(),
   network: z.string().min(1).max(40), httpStatus: z.number().int().min(100).max(599).optional(),
   latencyMs: z.number().nonnegative(), receivedRows: z.number().int().nonnegative().optional(),
   acceptedRows: z.number().int().nonnegative().optional(), schemaRejectedRows: z.number().int().nonnegative().optional(),
   budgetRejectedRows: z.number().int().nonnegative().optional(), finalCandidateCount: z.number().int().nonnegative().optional(),
   failureCode: z.string().optional(),
+  operation: z.string().min(1).max(40).optional(), category: z.string().min(1).max(40).optional(),
+  timeoutSource: z.enum(['adapter', 'caller', 'client']).optional(), accountsRead: z.number().int().nonnegative().optional(),
 })
 export const discoveryReplySchema = z.object({
   id: z.uuid(), intent: nftSearchIntentSchema, candidates: z.array(nftCandidateSchema).max(10),

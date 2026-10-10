@@ -1,0 +1,173 @@
+{
+  "accounts": {
+    "vault": {
+      "address": "6cjUGy5TrHWYeqiJQszQxutHYWE3ZkZSHAEqFyVuZiDi",
+      "value": {
+        "lamports": 500890880,
+        "owner": "11111111111111111111111111111111",
+        "executable": false,
+        "data": ""
+      }
+    },
+    "seller": {
+      "address": "5WVb76yWWqV8U2kvxCv6iQufnMPMJhn3unpko2A2a1vX",
+      "value": {
+        "lamports": 2976340360,
+        "owner": "11111111111111111111111111111111",
+        "executable": false,
+        "data": ""
+      }
+    },
+    "owner": {
+      "address": "4mQpqGgJZExYqrK7ZWfRxuAZ2uEoEFQC3ruCDUHFGD7w",
+      "value": {
+        "lamports": 2494644720,
+        "owner": "11111111111111111111111111111111",
+        "executable": false,
+        "data": ""
+      }
+    },
+    "agent": {
+      "address": "769Vy6WqWRThQ1tZrgyBgVWXuoZNrMrWkMdwtgpkiqF4",
+      "value": {
+        "lamports": 3000000000,
+        "owner": "11111111111111111111111111111111",
+        "executable": false,
+        "data": ""
+      }
+    },
+    "intruder": {
+      "address": "Cx8Ni5CvSY7C1wToTGyRtUmcTP7c2VHX35ScKxtuMDa7",
+      "value": {
+        "lamports": 3000000000,
+        "owner": "11111111111111111111111111111111",
+        "executable": false,
+        "data": ""
+      }
+    },
+    "mint": {
+      "address": "HVT5HUf9mmqvtwMjpQzJzUB6Nb6exumabw4sKkc5shny",
+      "value": {
+        "lamports": 1461600,
+        "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "executable": false,
+        "data": "AQAAAEA9IMSKf7eRoYGHCqKkdwNCCZEr9vy4n3+0ydc5w1wcAQAAAAAAAAAAAQEAAABAPSDEin+3kaGBhwqipHcDQgmRK/b8uJ9/tMnXOcNcHA=="
+      }
+    },
+    "metadata": {
+      "address": "GfiDsRaoXkuR9b9fXyjofKEGPseXMinivUR5vCoayqst",
+      "value": {
+        "lamports": 15115600,
+        "owner": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+        "executable": false,
+        "data": "BEL86m5m99ncEvns4zKxOIa+8JXVQq5ZAiMlFWE738k49QS8O8g6QSg5JKIiSrwNtZU4L/1xLorxSFftn4DJProgAAAAR29CdXkgbG9jYWwgb3JpZ2luYWwAAAAAAAAAAAAAAAAKAAAAR0JURVNUAAAAAMgAAABodHRwczovL2V4YW1wbGUuaW52YWxpZC9nb2J1eS1sb2NhbC10ZXN0Lmpzb24AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAf8BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ=="
+      }
+    },
+    "edition": {
+      "address": "5Km9xyFJd8TdwhDrfq2utgL89awUpvAGRh8zjCyZjq5d",
+      "value": {
+        "lamports": 1030080,
+        "owner": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+        "executable": false,
+        "data": "BgAAAAAAAAAAAQAAAAAAAAAAAAA="
+      }
+    },
+    "sellerAta": {
+      "address": "6A3nYRj7QkG6DHM3c9DouYshhy1zSbUj96SZ9mQJwLT7",
+      "value": null
+    },
+    "buyerAta": {
+      "address": "tfbFduVZd3AWCtBd7stficc15bDaMDMnSS62fR2KEu2",
+      "value": null
+    },
+    "listAta": {
+      "address": "EjiVbGP3iM3Ujb7rMGURtKdinjahST3gtAw2neH8PBro",
+      "value": {
+        "lamports": 2039280,
+        "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "executable": false,
+        "data": "9QS8O8g6QSg5JKIiSrwNtZU4L/1xLorxSFftn4DJPrqZDcIJPeo2aNypWBeNFDH8HKDYbuYsJQ7d63LSpiYsZQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    },
+    "listing": {
+      "address": "BJTYdbY4U6e9p86PpLKMB7GAH3oAtctzGoNEFhTBkKnL",
+      "value": {
+        "lamports": 3097200,
+        "owner": "TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp",
+        "executable": false,
+        "data": "TvJZiqHdsEsB/0L86m5m99ncEvns4zKxOIa+8JXVQq5ZAiMlFWE738k49QS8O8g6QSg5JKIiSrwNtZU4L/1xLorxSFftn4DJProA4fUFAAAAAADYR8lqAAAAAAAAQvzqbmb32dwS+ezjMrE4hr7wldVCrlkCIyUVYTvfyTgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      }
+    },
+    "mandate": {
+      "address": "2rNZFDpM8VwRVKPRyseh9E8vA49QJXeYWh4PbvJ7WXgf",
+      "value": {
+        "lamports": 2150640,
+        "owner": "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE",
+        "executable": false,
+        "data": "cdhin7k/NxI3844XeJ8RIa4eauQrwNo+NtWHWpAzE9qgOFyi7pGWOlNxyMNE1SdraOPbzqqIwb986m7Nu9khzNJ+UHcMsQ5lN/OOF3ifESGuHmrkK8DaPjbVh1qQMxPaoDhcou6RljoAZc0dAAAAAAAAAAAAAAAA2UfJagAAAAABAQDJOclqAAAAAAAAAAAAAAAA//9ad6LNN1HsmbVjbflj70o5rU2xX42I85o6C04An2rVpw=="
+      }
+    },
+    "authorization": {
+      "address": "DxjPgwcoTK92FUX1dX889mkB8NdhD1Kr2hsE3myaFgfj",
+      "value": {
+        "lamports": 2303760,
+        "owner": "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE",
+        "executable": false,
+        "data": "C0eE2TQPcGQBG4GFHE3Y6R1P6boe3wKfbkG0u6QLiyT3tM/aEMJfk/w3844XeJ8RIa4eauQrwNo+NtWHWpAzE9qgOFyi7pGWOlp3os03UeyZtWNt+WPvSjmtTbFfjYjzmjoLTgCfatWnBrXvsXXXgDRsGPph9YgZDlmBxGaNZR1nrXPDbjEYD983844XeJ8RIa4eauQrwNo+NtWHWpAzE9qgOFyi7pGWOgBlzR0AAAAAAAAAAAAAAADZR8lqAAAAAAHKOclqAAAAAP8="
+      }
+    },
+    "receipt": {
+      "address": "3yBmjBAxDWsWQnkVkbLwSMEJbsGcmXiUL8NnVvFNjYvW",
+      "value": null
+    },
+    "feeVault": {
+      "address": "DoBFNd1XuFTNrw2HxzJgUJkM5k2tpFynHMmjMHhnNX5P",
+      "value": {
+        "lamports": 890880,
+        "owner": "11111111111111111111111111111111",
+        "executable": false,
+        "data": ""
+      }
+    }
+  },
+  "decoded": {
+    "mandate": {
+      "address": "",
+      "executor": "769Vy6WqWRThQ1tZrgyBgVWXuoZNrMrWkMdwtgpkiqF4",
+      "owner": "4mQpqGgJZExYqrK7ZWfRxuAZ2uEoEFQC3ruCDUHFGD7w",
+      "vault": "6cjUGy5TrHWYeqiJQszQxutHYWE3ZkZSHAEqFyVuZiDi",
+      "recipient": "4mQpqGgJZExYqrK7ZWfRxuAZ2uEoEFQC3ruCDUHFGD7w",
+      "maxBudgetLamports": "500000000",
+      "spentLamports": "0",
+      "expiresAt": 1791576025,
+      "allowedCategory": "NFT",
+      "active": true,
+      "closed": false,
+      "createdAt": 1791572425,
+      "closedAt": 0
+    },
+    "authorization": {
+      "address": "DxjPgwcoTK92FUX1dX889mkB8NdhD1Kr2hsE3myaFgfj",
+      "version": 1,
+      "mandate": "2rNZFDpM8VwRVKPRyseh9E8vA49QJXeYWh4PbvJ7WXgf",
+      "owner": "4mQpqGgJZExYqrK7ZWfRxuAZ2uEoEFQC3ruCDUHFGD7w",
+      "executor": "769Vy6WqWRThQ1tZrgyBgVWXuoZNrMrWkMdwtgpkiqF4",
+      "marketplace": "TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp",
+      "recipient": "4mQpqGgJZExYqrK7ZWfRxuAZ2uEoEFQC3ruCDUHFGD7w",
+      "maxTotalDebitLamports": "500000000",
+      "spentLamports": "0",
+      "expiresAt": 1791576025,
+      "active": true,
+      "createdAt": 1791572426
+    },
+    "receipt": null,
+    "buyer": null,
+    "seller": null,
+    "listingToken": {
+      "mint": "HVT5HUf9mmqvtwMjpQzJzUB6Nb6exumabw4sKkc5shny",
+      "owner": "BJTYdbY4U6e9p86PpLKMB7GAH3oAtctzGoNEFhTBkKnL",
+      "amount": "1",
+      "state": 1
+    }
+  }
+}

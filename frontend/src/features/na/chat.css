@@ -161,3 +161,7 @@
 .vault-switch{background:#f4f9ff}
 .vault-switch-title{margin:12px 0 6px;font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#35689f}
 .vault-note strong{color:#28517f}
+/* Status of an order reopened from saved history: read-only, never a fresh authorization. */
+.chat-restored-order{margin:8px 0 4px;padding:10px 12px;border:1px solid #e2ecf8;border-radius:10px;background:#f7fbff}
+.chat-restored-order strong{display:block;margin-bottom:4px;color:#1e3a5f}
+.chat-restored-order p{margin:2px 0;color:#5f7d9e;overflow-wrap:anywhere}

@@ -1,0 +1,31 @@
+{
+  "status": "BLOCKED",
+  "kind": "local-implementation-status-not-transaction-evidence",
+  "baselineStep6Run": "37969595238",
+  "baseCommit": "a719a284a76dafc38f3c7f3683caf561aa4ea99d",
+  "buildRun": "37964523776",
+  "buildSourceCommit": "868d35fbc3818ceab5b0cd023773be62a7e36d3f",
+  "anchorTree": "66710f1c08529ff6414456be8c35e13a833f066e",
+  "realTensorCpi": "NOT_VERIFIED",
+  "originalNftDelivered": "NOT_TESTED",
+  "vaultPdaPayment": "NOT_VERIFIED",
+  "authorizationAndReceipt": "NOT_VERIFIED",
+  "negativePassed": 0,
+  "negativeTotal": 9,
+  "tests": [
+    { "name": "valid-purchase", "status": "BLOCKED" },
+    { "name": "invalid-listing", "status": "BLOCKED" },
+    { "name": "wrong-mint", "status": "BLOCKED" },
+    { "name": "unauthorized-executor", "status": "BLOCKED" },
+    { "name": "expired-authorization", "status": "BLOCKED" },
+    { "name": "insufficient-mandate-budget", "status": "BLOCKED" },
+    { "name": "insufficient-authorization-budget", "status": "BLOCKED" },
+    { "name": "duplicate-order", "status": "BLOCKED" },
+    { "name": "invalid-destination", "status": "BLOCKED" },
+    { "name": "transaction-rollback", "status": "BLOCKED" }
+  ],
+  "localChecks": { "sdkConstruction": "PASS", "transactionPacketSizes": "PASS", "purchaseUnitTests": "13/13", "syntax": "PASS", "workflowYaml": "PASS" },
+  "executionEvidence": "local-preflight.json",
+  "blockers": ["Local solana-test-validator unavailable", "Step 7 not run in GitHub Actions"],
+  "ciRunRequired": true
+}

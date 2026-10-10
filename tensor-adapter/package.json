@@ -10,6 +10,7 @@
     }
   },
   "scripts": {
+    "test": "npm run build && node --test tests/*.test.mjs",
     "build": "tsc -p tsconfig.json",
     "lint": "tsc --noEmit -p tsconfig.json"
   },

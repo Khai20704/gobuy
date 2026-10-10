@@ -1,0 +1,98 @@
+{
+  "feePayer": "4W376Jg8HUXA1DTA7nfqEPNuz4KeSqhMq1Ygw2DGbtrx",
+  "signers": [
+    "4W376Jg8HUXA1DTA7nfqEPNuz4KeSqhMq1Ygw2DGbtrx",
+    "B3tE5CUGWYjiucMTfxruPHVKb1zMJuox3ymQFFUfHRfX"
+  ],
+  "instructions": [
+    {
+      "programId": "ComputeBudget111111111111111111111111111111",
+      "data": "022a420f00",
+      "accounts": []
+    },
+    {
+      "programId": "11111111111111111111111111111111",
+      "data": "00000000604d160000000000520000000000000006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9",
+      "accounts": [
+        {
+          "address": "4W376Jg8HUXA1DTA7nfqEPNuz4KeSqhMq1Ygw2DGbtrx",
+          "isSigner": true,
+          "isWritable": true
+        },
+        {
+          "address": "B3tE5CUGWYjiucMTfxruPHVKb1zMJuox3ymQFFUfHRfX",
+          "isSigner": true,
+          "isWritable": true
+        }
+      ]
+    },
+    {
+      "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "data": "1400340348ce8e76a2a0a16d79c19cc688b48735f0257e2a0ae2650b4d7d3839347d01340348ce8e76a2a0a16d79c19cc688b48735f0257e2a0ae2650b4d7d3839347d",
+      "accounts": [
+        {
+          "address": "B3tE5CUGWYjiucMTfxruPHVKb1zMJuox3ymQFFUfHRfX",
+          "isSigner": false,
+          "isWritable": true
+        }
+      ]
+    },
+    {
+      "programId": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "data": "",
+      "accounts": [
+        {
+          "address": "4W376Jg8HUXA1DTA7nfqEPNuz4KeSqhMq1Ygw2DGbtrx",
+          "isSigner": true,
+          "isWritable": true
+        },
+        {
+          "address": "25n4UjcVsPX6b3oDEdmaTiHJkAKLzaMncMwqrTbi9QMf",
+          "isSigner": false,
+          "isWritable": true
+        },
+        {
+          "address": "4W376Jg8HUXA1DTA7nfqEPNuz4KeSqhMq1Ygw2DGbtrx",
+          "isSigner": false,
+          "isWritable": false
+        },
+        {
+          "address": "B3tE5CUGWYjiucMTfxruPHVKb1zMJuox3ymQFFUfHRfX",
+          "isSigner": false,
+          "isWritable": false
+        },
+        {
+          "address": "11111111111111111111111111111111",
+          "isSigner": false,
+          "isWritable": false
+        },
+        {
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "isSigner": false,
+          "isWritable": false
+        }
+      ]
+    },
+    {
+      "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "data": "070100000000000000",
+      "accounts": [
+        {
+          "address": "B3tE5CUGWYjiucMTfxruPHVKb1zMJuox3ymQFFUfHRfX",
+          "isSigner": false,
+          "isWritable": true
+        },
+        {
+          "address": "25n4UjcVsPX6b3oDEdmaTiHJkAKLzaMncMwqrTbi9QMf",
+          "isSigner": false,
+          "isWritable": true
+        },
+        {
+          "address": "4W376Jg8HUXA1DTA7nfqEPNuz4KeSqhMq1Ygw2DGbtrx",
+          "isSigner": true,
+          "isWritable": false
+        }
+      ]
+    }
+  ]
+}

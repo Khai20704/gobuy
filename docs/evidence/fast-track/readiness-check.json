@@ -1,0 +1,13 @@
+{
+  "checkedAt": "2026-10-09T23:56:32.356Z",
+  "oldVaultAndHistoricalAccountsUnchanged": true,
+  "step7EvidenceFilesVerified": 283,
+  "program": "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE",
+  "programData": "GocAbEB3CrykEu5wTyZ4w888cQn2krEtuuEiMJGwqGek",
+  "authority": "6CndRMc647mRNyFLTXVefngq7kgouexvoVP6v4aZQ6JB",
+  "deployedSha256": "2fe02be44d7ac3e2d0f05c04de29d5937bacad085039d5c924cb4b5785fc4a59",
+  "targetSha256": "9c092a8d33903079f73d3ede303e71ea29ece86ff14f2f08a7f2d548943c902f",
+  "targetBytes": 298456,
+  "programDataTopUpLamports": 94447360,
+  "bufferMinimumLamports": 1516994680
+}

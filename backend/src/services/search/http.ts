@@ -3,7 +3,7 @@ import { isPublicHttpsUrl } from '@gobuy/shared'
 export type Fetcher = typeof fetch
 export type ProviderFailureCode = 'AUTHENTICATION_FAILED' | 'ACCESS_FORBIDDEN' | 'RATE_LIMITED'
   | 'PROVIDER_UNAVAILABLE' | 'INVALID_RESPONSE' | 'RESPONSE_TOO_LARGE' | 'TIMEOUT' | 'NO_DATA'
-  | 'DISABLED' | 'AUTH_REQUIRED' | 'NETWORK_ERROR' | 'SCHEMA_MISMATCH' | 'NO_MATCH'
+  | 'DISABLED' | 'AUTH_REQUIRED' | 'NETWORK_ERROR' | 'SCHEMA_MISMATCH' | 'NO_MATCH' | 'RPC_UNSUPPORTED'
 
 const providerFailureMessages: Record<ProviderFailureCode, string> = {
   DISABLED: 'Provider is disabled.', AUTH_REQUIRED: 'This capability requires an API key.',
@@ -17,6 +17,7 @@ const providerFailureMessages: Record<ProviderFailureCode, string> = {
   RESPONSE_TOO_LARGE: 'Provider response is too large; the allowed-size limit was exceeded.',
   TIMEOUT: 'Provider request timed out.',
   NO_DATA: 'Provider returned no usable market data.',
+  RPC_UNSUPPORTED: 'RPC endpoint does not support an operation this feature requires.',
 }
 
 export function providerFailureCode(status?: number): ProviderFailureCode {

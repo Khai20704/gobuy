@@ -219,6 +219,8 @@ export const nftPurchaseResultSchema = z.object({
   maxTotalDebitLamports: lamportString,
   signature: z.string().nullable(),
   receipt: nftPurchaseReceiptSchema.nullable(),
+  delivery: z.object({ owner: walletAddressSchema, mint: walletAddressSchema, tokenAccount: walletAddressSchema,
+    signature: z.string(), slot: z.number().int().nonnegative(), commitment: z.literal('finalized'), amount: z.literal('1') }).strict().nullable().default(null),
   rejection: z.enum(NFT_PURCHASE_RESULT_REJECTIONS).nullable(),
   message: z.string().min(1),
 }).strict()

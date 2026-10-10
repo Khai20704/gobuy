@@ -1,0 +1,155 @@
+{
+  "status": "PASS",
+  "startedAt": "2026-10-09T19:00:22.064Z",
+  "realTensorCpi": "VERIFIED",
+  "originalNftDelivered": "YES",
+  "vaultPdaPayment": "VERIFIED",
+  "authorizationAndReceipt": "VERIFIED",
+  "negativePassed": 9,
+  "negativeTotal": 9,
+  "tests": [
+    {
+      "name": "valid-purchase",
+      "status": "PASS",
+      "signature": "5rZuLByBCWjVojS7twz74Fjrg7rQikR7z1EFBrCUHWPmKKbbPrWUGp3wtsGnwqca1gS2rq41Yhmw4DcsYAVjj1Ca",
+      "evidence": "007-valid-purchase-transaction.json"
+    },
+    {
+      "name": "duplicate-order",
+      "status": "PASS",
+      "signature": "4wSagaPG3NpwM4sXvYpSf49w9y1833KQxaeQiyJJeTfRRrh7ahyTzQ9ZxgMtM35XUdDDueNHyyV4tzD8ELXKRs1S",
+      "evidence": "008-duplicate-order-transaction.json"
+    },
+    {
+      "name": "invalid-listing",
+      "status": "PASS",
+      "signature": "2g6a7YFvJDE8TEmRBWZxt1QTVpiZv8XxJ6U4k1uYiCVkMTcieg1uni8zsD1UdS8sS8E9ViDNKVZrQDyAkiriD1US",
+      "evidence": "015-invalid-listing-transaction.json",
+      "expectedError": "InvalidListing",
+      "reachesTensor": false
+    },
+    {
+      "name": "wrong-mint",
+      "status": "PASS",
+      "signature": "5px1cgnKr53VoXDjb6qGqE5eazd8ADu2Q8BCH2x5cqixMUQ6uNArtp2nzDEgcwNbMgVtAFhhbWA9g6W45Jh1fq5m",
+      "evidence": "022-wrong-mint-transaction.json",
+      "expectedError": "InvalidListing",
+      "reachesTensor": false
+    },
+    {
+      "name": "unauthorized-executor",
+      "status": "PASS",
+      "signature": "43xGvVsTESqQg9kSoJwjzcFNbu96BhysWhuTjwHt7N4WYE9EvUbEy6baZKqQgQotcCrzoqbZuSCMsY1iBay37jHn",
+      "evidence": "029-unauthorized-executor-transaction.json",
+      "expectedError": "InvalidOwner",
+      "reachesTensor": false
+    },
+    {
+      "name": "expired-authorization",
+      "status": "PASS",
+      "signature": "5GFu66NU8u6JnMbPVXc8JZaFm1z9jDVCxnzuowr2wDDFou5nFfgzGENWy7Y4gf3NsecfozqUeSBy7AjscoojG5DG",
+      "evidence": "036-expired-authorization-transaction.json",
+      "expectedError": "PurchaseAuthorizationExpired",
+      "reachesTensor": false
+    },
+    {
+      "name": "insufficient-mandate-budget",
+      "status": "PASS",
+      "signature": "5wRcWSE4a9FLfAQDR6MhAy7uw2mLr1ePiuDjfF9R7K9WkuXh4Ndf9Y3rSzjynBYYtSuJXSEpBQ2PxamJ1bjJF2q2",
+      "evidence": "043-insufficient-mandate-budget-transaction.json",
+      "expectedError": "BudgetExceeded",
+      "reachesTensor": false
+    },
+    {
+      "name": "insufficient-authorization-budget",
+      "status": "PASS",
+      "signature": "57eDDP3PJMnVUNyNBd2QzjezHkcyLvR8bpERswxyAguKxTM9j1jKv1Au8y9sFZwVJ6v3DMcFtoY47cqN9aARJUYq",
+      "evidence": "050-insufficient-authorization-budget-transaction.json",
+      "expectedError": "PurchaseAuthorizationBudgetExceeded",
+      "reachesTensor": true
+    },
+    {
+      "name": "invalid-destination",
+      "status": "PASS",
+      "signature": "ecyB8mpjXuVdheG3rvKqqeihiH5PKn756GidtC1n6hXDVJbHrRHcgDfvcVrQskW6LWue1TMb4sc1qAZjiZQX8WS",
+      "evidence": "057-invalid-destination-transaction.json",
+      "expectedError": "InvalidBuyerTokenAccount",
+      "reachesTensor": false
+    },
+    {
+      "name": "transaction-rollback",
+      "status": "PASS",
+      "signature": "5mmEk2j2PmdED4WJRgGz6HUG5vnX83fyBqLmZ9Td5XEzpNCgFjLRJjUrUrAyS8Q8acf1MMUHH2EeQtzZjkHLJdiR",
+      "evidence": "064-transaction-rollback-transaction.json"
+    }
+  ],
+  "environment": {
+    "rpc": "http://127.0.0.1:18899",
+    "node": "v22.23.3",
+    "validator": "solana-test-validator 3.0.14 (src:f516a892; feat:3604001754, client:Agave)",
+    "genesisHash": "9Zabr9TCiNmJdXmYz9kJbqCBaxEypqxfqBAhXdbbu6ZP",
+    "gobuy": {
+      "programId": "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE",
+      "sha256": "9c092a8d33903079f73d3ede303e71ea29ece86ff14f2f08a7f2d548943c902f",
+      "bytes": 298456
+    },
+    "programs": [
+      {
+        "address": "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE",
+        "sha256": "9c092a8d33903079f73d3ede303e71ea29ece86ff14f2f08a7f2d548943c902f",
+        "executable": true,
+        "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+        "localDeploymentSlot": 0
+      },
+      {
+        "address": "TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp",
+        "sha256": "f8b67c44f18d44a35695e20e41e200fe3d1282e335dc4c63674c34b1bcdb2a42",
+        "executable": true,
+        "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+        "localDeploymentSlot": 0
+      },
+      {
+        "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+        "sha256": "31f0a627dba051a938de650464e55cc5397a4be0fd496929c1f9cf02fe5e9011",
+        "executable": true,
+        "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+        "localDeploymentSlot": 0
+      },
+      {
+        "address": "auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg",
+        "sha256": "47fba67c40ff5f3f44d8465dae3b63876c549d1671a39d5c5a5132524d09233c",
+        "executable": true,
+        "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+        "localDeploymentSlot": 0
+      },
+      {
+        "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "sha256": "8190d3f7ceb6cb7a7a8d8924bff89f9f611e15ce1f806f2b6237f3311a98f697",
+        "executable": true,
+        "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+        "localDeploymentSlot": 0
+      },
+      {
+        "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "sha256": "6804554e69fd3a58caa191dc4a58f4c67223d30ca28ab8987f39fc18d2f7374d",
+        "executable": true,
+        "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+        "localDeploymentSlot": 0
+      }
+    ],
+    "marketplaceSdk": "1.0.0",
+    "metadataSdk": "1.0.0-beta.1",
+    "provenance": {
+      "id": 37964523776,
+      "sourceCommit": "868d35fbc3818ceab5b0cd023773be62a7e36d3f",
+      "url": "https://github.com/Khai20704/gobuy/actions/runs/37964523776",
+      "harnessCommit": "f1a5a6156522e8dd2e48a60c57f9ca90a3da320b",
+      "conclusion": "success",
+      "anchorSourceTreeVerified": true,
+      "builtTree": "66710f1c08529ff6414456be8c35e13a833f066e",
+      "testedTree": "66710f1c08529ff6414456be8c35e13a833f066e",
+      "buildWorkflow": "e291d1b68ce241ac243c793fdf6ead01115d80be"
+    }
+  },
+  "finishedAt": "2026-10-09T19:01:21.628Z"
+}

@@ -1,0 +1,103 @@
+{
+  "discriminator": {
+    "type": "Buffer",
+    "data": [
+      78,
+      242,
+      89,
+      138,
+      161,
+      221,
+      176,
+      75
+    ]
+  },
+  "version": 1,
+  "bump": [
+    253
+  ],
+  "owner": "5s2xdsrHLeCYbNmbQf3rUjBpRhKL9qEMxpPbFo2ENSTa",
+  "assetId": "B7pjopc7TQHJ3R1soUUgEBUCC16mBFxLFKkKw6ZbwgM9",
+  "amount": "100000000",
+  "currency": {
+    "__option": "None"
+  },
+  "expiry": "1791576067",
+  "privateTaker": {
+    "__option": "None"
+  },
+  "makerBroker": {
+    "__option": "None"
+  },
+  "rentPayer": "5s2xdsrHLeCYbNmbQf3rUjBpRhKL9qEMxpPbFo2ENSTa",
+  "cosigner": null,
+  "reserved1": {
+    "type": "Buffer",
+    "data": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  }
+}

@@ -21,6 +21,7 @@ const providerMessage = (code: ProviderFailureCode) => ({
   RESPONSE_TOO_LARGE: 'Phản hồi marketplace vượt giới hạn an toàn.',
   TIMEOUT: 'Marketplace phản hồi quá thời gian.',
   NO_DATA: 'Marketplace không trả dữ liệu có thể dùng.',
+  RPC_UNSUPPORTED: 'RPC Devnet không hỗ trợ thao tác mà tính năng này bắt buộc.',
 })[code]
 
 export class NFTRankingService {

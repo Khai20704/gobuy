@@ -1,0 +1,34 @@
+{
+  "checkedAt": "2026-10-09T23:59:17.287Z",
+  "checks": {
+    "fullUnit": {
+      "passed": true,
+      "log": ".fast-track-tests.log"
+    },
+    "targeted": {
+      "passed": true,
+      "log": ".fast-track-targeted.log"
+    },
+    "browser": {
+      "passed": true,
+      "log": ".fast-track-browser.log"
+    },
+    "frontendBuild": {
+      "passed": true,
+      "log": ".fast-track-frontend-build.log"
+    },
+    "backendBuild": {
+      "passed": true,
+      "log": ".fast-track-backend-build.log"
+    },
+    "typecheck": {
+      "passed": true,
+      "log": ".fast-track-lint.log"
+    }
+  },
+  "tensorConstants": 88,
+  "fixtureRegressions": 9,
+  "packetBytes": 943,
+  "computeLimit": 200000,
+  "realChainMutations": false
+}

@@ -1,0 +1,19 @@
+{
+  "minimumExecutionSlot": 1,
+  "commitment": "confirmed",
+  "observations": [
+    {
+      "at": "2026-10-09T19:00:20.840Z",
+      "slot": 0
+    },
+    {
+      "at": "2026-10-09T19:00:21.092Z",
+      "slot": 0
+    },
+    {
+      "at": "2026-10-09T19:00:21.343Z",
+      "slot": 1
+    }
+  ],
+  "ready": true
+}

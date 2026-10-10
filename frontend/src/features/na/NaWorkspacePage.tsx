@@ -3,26 +3,30 @@ import { Link } from 'react-router-dom'
 import { useAccount } from '../account/AccountContext'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { assetResolutionViewSchema, autonomousReconciliationSchema, type AutonomousPurchaseResult, type AutonomousReconciliation, discoveryReplySchema, nftDemoReceiptSchema, rwaReplySchema, naChatKind, naChatReplySchema,
-  namedNFTQuery, namedNFTPurchaseName, type DiscoveryReply, type NFTCandidate, type NftDemoQuote, type NftDemoReceipt, type RWAReply } from '@gobuy/shared'
+  namedNFTQuery, namedNFTPurchaseName, type DiscoveryReply, type NftDemoQuote, type NftDemoReceipt, type RWAReply } from '@gobuy/shared'
 import { findPhantomProvider, phantomProvider, signPhantomMessage } from '../../services/solana/phantom'
 import { explorerAccount, explorerTx } from '../../services/solana/links'
 import { devnetConnection, requireDevnet } from '../../services/solana/network'
 import { PhantomWalletProvider, type WalletProvider } from '../../services/solana/walletProvider'
-import { acquisitionApi as api, AcquisitionApiError } from '../../services/api/acquisition'
+import { acquisitionApi as api } from '../../services/api/acquisition'
 import { investmentApi } from '../../services/api/investment'
 import { nftDemoApi as legacyApi } from '../../services/api/nftDemo'
 import { NaConsole } from './components/NaConsole'
 import { NaVaultPanel } from './components/NaVaultPanel'
 import { RwaOrderDetails } from './components/RwaOrderDetails'
-import { RequestHistory, purchasePhaseLabel } from './components/RequestHistory'
+import { RequestHistory, purchasePhaseLabel, statusLabel } from './components/RequestHistory'
 import { WalletPortfolioPanel } from './components/WalletPortfolioPanel'
 import { hasSolBudget, isBudgetOnlyReply, isPurchaseIntent, isCollectionPriceDiscovery } from './intentFollowUp'
-import { executeAutonomousPurchase } from './autonomousPurchase'
+import { nftPurchaseApi } from '../../services/api/nftPurchase'
+import { GenuineNftPurchase, GenuinePurchaseResult } from './components/GenuineNftPurchase'
+import { genuineDeliveryVerified } from './genuinePurchase'
+import type { NftPurchaseResult } from '@gobuy/shared'
 import './chat.css'
 import { deliveryStatusLabel, deliveryPollingFinished } from './deliveryStatus'
 import { naRequestSchema, type NaRequest } from '@gobuy/shared'
 
-type Message = { id: string; role: 'user' | 'na'; text: string; restoredOwner?: string; discovery?: DiscoveryReply; rwa?: RWAReply; quote?: NftDemoQuote; receipt?: NftDemoReceipt; autonomous?: AutonomousPurchaseResult }
+/** `order` carries the saved request/order snapshot so a reopened conversation shows its status. */
+type Message = { id: string; role: 'user' | 'na'; text: string; restoredOwner?: string; order?: NaRequest; discovery?: DiscoveryReply; rwa?: RWAReply; quote?: NftDemoQuote; receipt?: NftDemoReceipt; autonomous?: AutonomousPurchaseResult; genuine?: NftPurchaseResult }
 
 export function NaWorkspacePage() {
   const account = useAccount()
@@ -70,8 +74,17 @@ export function NaWorkspacePage() {
   const feed = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
   const add = (message: Omit<Message, 'id'>) => setMessages(current => [...current, { id: crypto.randomUUID(), ...message }])
+  /**
+   * Reopens one saved conversation.
+   *
+   * The click used to return silently whenever no wallet was connected, so the button looked dead.
+   * It now always answers. Rows are replaced atomically for a single conversation id, and the saved
+   * order snapshot is carried onto the restored messages so the recorded status is visible again.
+   * A restored order is read-only history: it never re-authorizes a purchase.
+   */
   async function openHistory(request: NaRequest) {
-    if (!wallet || lock.current) return
+    if (lock.current) return
+    if (!wallet) { setWalletNotice('Kết nối ví đã dùng cho cuộc trò chuyện này để mở lại lịch sử.'); return }
     lock.current = true; setBusy(true)
     const owner = wallet
     try {
@@ -82,16 +95,19 @@ export function NaWorkspacePage() {
       // Historical listings are context, never fresh purchase authorization.
       if (discovery) discovery.intent = { ...discovery.intent, action: 'SEARCH' }
       setConversationId(result.conversationId); localStorage.setItem(conversationKey, result.conversationId)
+      // One conversation at a time: every restored message is scoped to the wallet that owns it.
       setMessages(rows.flatMap(row => [
         { id: row.id + ':user', role: 'user' as const, text: row.prompt, restoredOwner: owner },
         ...(row.response ? [{ id: row.id + ':na', role: 'na' as const, text: row.response, restoredOwner: owner,
+          ...(hasSavedOrder(row) ? { order: row } : {}),
           ...(row.id === request.id && discovery ? { discovery } : {}) }] : []),
       ]))
       setHistoryConversation(true); setText('')
       pendingPurchaseIntent.current = request.status === 'NEEDS_INPUT' && !discovery ? request.prompt : ''
       pendingRwaPrompt.current = ''
+      setWalletNotice('Đã mở lại cuộc trò chuyện đã lưu. Đây là lịch sử; Na không gửi giao dịch mới.')
       input.current?.focus()
-    } catch { setWalletNotice('Chưa mở được cuộc trò chuyện. Thử lại trong Lịch sử.') }
+    } catch (error) { setWalletNotice(error instanceof Error ? error.message : 'Chưa mở được cuộc trò chuyện. Thử lại trong Lịch sử.') }
     finally { lock.current = false; setBusy(false) }
   }
   // Account-scoped reconciliation may retry delivery, but never repeats a confirmed payment.
@@ -182,8 +198,10 @@ export function NaWorkspacePage() {
     if (walletRef.current !== owner) setBalance(null)
     walletRef.current = owner
     setWallet(owner)
-    await refreshBalance(owner)
+    void refreshBalance(owner)
+    setStage('Đã kết nối Phantom. Đang kiểm tra liên kết với GoBuy…')
     const linked = await api('/wallets') as Array<{ address: string; verified: boolean }>
+    if (walletRef.current !== owner || provider.getAddress() !== owner) throw new Error('Ví đã thay đổi trong lúc kiểm tra liên kết.')
     setWalletLinked(linked.some(item => item.address === owner && item.verified))
     setRequestHistoryRevision(value => value + 1)
     return { provider, owner }
@@ -207,6 +225,7 @@ export function NaWorkspacePage() {
   async function walletButton() {
     if (lock.current) return
     lock.current = true; setBusy(true)
+    setStage('Đang chờ Phantom. Mở extension, mở khóa ví và xác nhận kết nối…')
     try { await connect() }
     catch (e) { add({ role: 'na', text: e instanceof Error ? e.message : 'Chưa kết nối được Phantom.' }) }
     finally { lock.current = false; setBusy(false); setStage('') }
@@ -253,6 +272,10 @@ export function NaWorkspacePage() {
     if (lock.current || !pendingOrder || !wallet || !walletLinked) return
     lock.current = true; setBusy(true); setStage('Đang kiểm tra giao dịch trên devnet…')
     try {
+      if (localStorage.getItem(pendingKey + ':engine') === 'genuine') {
+        if (localStorage.getItem(pendingKey + ':owner') !== wallet) throw new Error('Kết nối đúng ví của đơn đang chờ.')
+        showGenuine(await nftPurchaseApi.status(pendingOrder)); return
+      }
       if (localStorage.getItem(pendingKey + ':engine') === 'rwa') {
         const saved = JSON.parse(localStorage.getItem(pendingKey + ':rwa') ?? 'null')
         if (!saved || saved.requestId !== pendingOrder) throw new Error('Không tìm thấy nội dung yêu cầu RWA ban đầu.')
@@ -279,7 +302,6 @@ export function NaWorkspacePage() {
     lock.current = true; setBusy(true); setWalletNotice('')
     setStage('Đã nhận tin nhắn. Na đang phân loại yêu cầu…')
     setText(''); add({ role: 'user', text: request })
-    let autoAcquire: { discovery: DiscoveryReply; candidate: NFTCandidate } | undefined
     try {
       const budgetOnlyReply = isBudgetOnlyReply(request)
       const previousIntent = pendingPurchaseIntent.current
@@ -346,9 +368,6 @@ export function NaWorkspacePage() {
         const price = Number(discovery.candidates[0].listing.priceLamports)
         add({ role: 'na', text: `Giá listing thấp nhất tìm được là ${price / 1e9} SOL, chưa gồm phí. Chưa có tổng chi đã xác minh; Na không tự cộng một khoản phí giả hoặc tăng hạn mức. Bạn có thể nêu mức tối đa bằng SOL để kiểm tra tiếp.` })
       }
-      if (!discovery.intent.priceDiscoveryOnly && discovery.intent.action === 'BUY' && discovery.candidates[0] && discovery.candidates[0].sourceNetwork !== 'mainnet') {
-        autoAcquire = { discovery, candidate: discovery.candidates[0] }
-      }
     } catch (e) {
       setText(request)
       add({ role: 'na', text: e instanceof Error && e.name === 'TimeoutError'
@@ -358,7 +377,6 @@ export function NaWorkspacePage() {
       setRequestHistoryRevision(value => value + 1)
       lock.current = false; setBusy(false); setStage(''); input.current?.focus()
     }
-    if (autoAcquire) void acquire(autoAcquire.discovery, autoAcquire.candidate)
   }
   function showReconciliation(reply: AutonomousReconciliation) {
     // Reconciliation preserves the original payment and may resume asset delivery.
@@ -369,48 +387,31 @@ export function NaWorkspacePage() {
     setVaultRevision(value => value + 1)
     void refreshBalance()
   }
-  function showAutonomous(reply: AutonomousPurchaseResult) {
-    add({ role: 'na', text: reply.result.message, autonomous: reply })
-    if (reply.result.status !== 'PENDING') {
-      localStorage.removeItem(pendingKey); setPendingOrder('')
-      setVaultRevision(value => value + 1)
-      void refreshBalance()
+  function showGenuine(result: NftPurchaseResult) {
+    setMessages(current => [...current.filter(row => row.genuine?.orderId !== result.orderId),
+      { id: crypto.randomUUID(), role: 'na', text: '', restoredOwner: localStorage.getItem(pendingKey + ':owner') || walletRef.current, genuine: result }])
+    if (genuineDeliveryVerified(result) || !['PENDING', 'CONFIRMED', 'RECONCILIATION_ERROR'].includes(result.status)) {
+      localStorage.removeItem(pendingKey); setPendingOrder(''); setVaultRevision(value => value + 1)
     }
   }
-  async function acquire(discovery: DiscoveryReply, candidate: NFTCandidate) {
-    if (lock.current || pendingOrder) return
-    lock.current = true; setBusy(true); setWalletNotice('')
-    try {
-      const owner = walletRef.current
-      if (discovery.intent.action !== 'BUY' || discovery.intent.priceDiscoveryOnly) throw new Error('SEARCH only recommends. Send a PURCHASE request with a budget to execute the Devnet demo.')
-      if (!owner) throw new Error('Connect the wallet that owns the mandate before execution.')
-      if (!walletLinked) throw new Error('Ví chưa được liên kết đã xác minh với tài khoản GoBuy. Dùng bước xác minh liên kết ví riêng trước khi yêu cầu PURCHASE. Chưa chi SOL; không mở Phantom làm fallback.')
-      if (candidate.sourceNetwork !== 'devnet') throw new Error('Autonomous spend requires a verified Devnet listing.')
-      await requireDevnet(devnetConnection())
-      setStage('Validating listing and mandate for Devnet autonomous spend demo; Na Agent signs server-side...')
-      // Save before POST: a dropped response must never cause a new spend request.
-      localStorage.setItem(pendingKey + ':engine', 'autonomous')
-      localStorage.setItem(pendingKey, discovery.id); setPendingOrder(discovery.id)
-      let purchase = await executeAutonomousPurchase(api, discovery, candidate, owner, true)
-      for (let attempt = 0; attempt < 8 && purchase.result.status === 'PENDING' && purchase.phase !== 'DELIVERY_FAILED'; attempt++) {
-        await new Promise(resolve => setTimeout(resolve, 2000))
-        const reconciled = autonomousReconciliationSchema.parse(await api(reconcileUrl(discovery.id)))
-        if (reconciled.purchase) purchase = reconciled.purchase
-        if (reconciled.status !== 'PENDING') break
-      }
-      showAutonomous(purchase)
-    } catch (error) {
-      if (error instanceof AcquisitionApiError && error.executionStarted === false) {
-        localStorage.removeItem(pendingKey); setPendingOrder('')
-      }
-      add({ role: 'na', text: error instanceof Error ? error.message : 'Execution could not be confirmed. Check the pending request; do not create another spend.' })
-    } finally {
-      setRequestHistoryRevision(value => value + 1)
-      lock.current = false; setBusy(false); setStage(''); input.current?.focus()
+  useEffect(() => {
+    if (!pendingOrder || !wallet || !walletLinked || localStorage.getItem(pendingKey + ':engine') !== 'genuine') return
+    if (localStorage.getItem(pendingKey + ':owner') !== wallet) return
+    let active = true, running = false
+    const poll = async () => {
+      if (running || !active) return
+      running = true
+      try {
+        const result = await nftPurchaseApi.status(pendingOrder)
+        if (active && walletRef.current === wallet) showGenuine(result)
+      } catch { /* Preserve the original order on RPC/HTTP uncertainty. */ }
+      finally { running = false }
     }
-  }
+    void poll(); const timer = window.setInterval(() => void poll(), 5000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [pendingOrder, wallet, walletLinked, pendingKey])
   return <main className="na-chat-app">
-    <header className="chat-header"><a href="/na" className="chat-brand">na<span>·</span></a><div className="chat-title"><strong>Trợ lý tìm &amp; mua tài sản NFT / RWA</strong><span>{discoveryMode}</span></div>
+    <header className="chat-header"><a href="/na" className="chat-brand">na<span>·</span></a><div className="chat-title"><strong>Người bạn mua sắm</strong><span>{discoveryMode}</span></div>
       <Link className="chat-account" to="/account">Tài khoản &amp; địa chỉ</Link>
       <button className="chat-wallet" disabled={busy} onClick={() => void walletButton()}>{wallet ? `${wallet.slice(0, 4)}…${wallet.slice(-4)}` : 'Kết nối Phantom'}</button>
       <button className="chat-logout" disabled={busy} onClick={() => void account.logout()} title="Đăng xuất khỏi GoBuy" aria-label="Đăng xuất khỏi GoBuy">
@@ -449,6 +450,7 @@ export function NaWorkspacePage() {
       {visibleMessages.map(message => <article key={message.id} className={`chat-message ${message.role}`}>
         {message.role === 'na' && <span className="chat-avatar">na·</span>}
         <div className="chat-bubble"><p>{message.text}</p>
+          {message.order && <RestoredOrderStatus order={message.order}/>}
           {message.rwa && <RwaOrderDetails reply={message.rwa} busy={busy} onEvaluate={id => void evaluateRwaOrder(message.id, id)}/>}
           {message.rwa && <section className="chat-rwa-result" aria-label="Thông tin RWA">
             {message.rwa.signature && <a href={explorerTx(message.rwa.signature)} target="_blank" rel="noreferrer">Xem khoản chi demo Devnet ↗</a>}
@@ -486,6 +488,7 @@ export function NaWorkspacePage() {
               </div>)}
             </section>}
             {message.discovery.warnings.map((warning, index) => <p className="candidate-warning" key={index}>{warning}</p>)}
+            {!message.discovery.candidates.length && message.discovery.intent.action === 'BUY' && <p className="candidate-warning">Không tìm được listing NFT phù hợp đang bán. Chưa mua tài sản và không tạo NFT DEMO thay thế.</p>}
             {message.discovery.candidates.map(candidate => <div className="chat-art nft-candidate" key={candidate.id}>
               {candidate.image ? <img src={candidate.image} alt={candidate.name} referrerPolicy="no-referrer" onError={event => { event.currentTarget.style.display = 'none' }}/>
                 : <span className="candidate-no-image">Chưa có ảnh</span>}
@@ -497,12 +500,14 @@ export function NaWorkspacePage() {
                 <p>Đọc lúc {new Date(candidate.listing.observedAt).toLocaleString('vi-VN')}</p>
                 {candidate.listing.url && <a href={candidate.listing.url} target="_blank" rel="noreferrer">Đối chiếu marketplace ↗</a>}
                 {candidate.mint && <a href={candidate.sourceNetwork === 'mainnet' ? `https://explorer.solana.com/address/${candidate.mint}?cluster=mainnet-beta` : explorerAccount(candidate.mint)} target="_blank" rel="noreferrer">Kiểm tra mint trên Explorer ↗</a>}
-                <button disabled={busy || !!pendingOrder || candidate.sourceNetwork !== 'devnet' || message.discovery!.intent.action !== 'BUY' || !!message.discovery!.intent.priceDiscoveryOnly} onClick={() => void acquire(message.discovery!, candidate)}>
-                  {candidate.sourceNetwork === 'mainnet' ? 'MAINNET · Không mua được' : message.discovery!.intent.action === 'SEARCH' ? 'SEARCH: chỉ đề xuất' : 'Devnet autonomous spend demo'}
-                </button>
+                <GenuineNftPurchase discovery={message.discovery!} candidate={candidate} owner={wallet}
+                  ready={!!wallet && walletLinked && devnetReady} disabled={busy || !!pendingOrder} storageScope={pendingKey}
+                  onPending={() => { if (localStorage.getItem(pendingKey)) throw new Error('Đơn trước đang chờ đối soát. Không mua thêm.'); localStorage.setItem(pendingKey + ':engine', 'genuine'); localStorage.setItem(pendingKey + ':owner', wallet); localStorage.setItem(pendingKey, message.discovery!.id); setPendingOrder(message.discovery!.id) }}
+                  onResult={showGenuine}/>
               </div>
             </div>)}
           </div>}
+          {message.genuine && <GenuinePurchaseResult result={message.genuine}/>}
           {message.autonomous && <AutonomousSpendDetails reply={message.autonomous} onDemoReplacement={() => void acceptDemoReplacement(message.autonomous!)} canRecover={!!wallet && walletLinked && !busy}/>}
           {message.quote && <div className="chat-art"><img src={message.quote.image} alt={message.quote.title}/><div><small>DEVNET SIMULATION</small><h3>{message.quote.title}</h3><strong>{message.quote.priceLamports / 1e9} SOL thử nghiệm</strong><p>Phí đã được tính trong tổng dự kiến ở trên. Không mua NFT gốc.</p></div></div>}
           {message.receipt?.signature && <code className="transaction-signature">{message.receipt.signature}</code>}
@@ -530,6 +535,27 @@ export function NaWorkspacePage() {
       </form><p className="chat-hint">Enter để gửi · Shift + Enter để xuống dòng · Không dùng SOL thật</p>
     </div>
   </main>
+}
+
+/** True when a saved request carries an order, so its status is worth restoring. */
+function hasSavedOrder(request: NaRequest) {
+  return !!(request.phase || request.orderId || request.signature)
+}
+
+/**
+ * The recorded status of a reopened order.
+ *
+ * It reads only what the database already stored: restoring history must never re-verify, retry or
+ * resubmit anything, so an uncertain order keeps saying it is awaiting review.
+ */
+function RestoredOrderStatus({ order }: { order: NaRequest }) {
+  const label = order.phase ? purchasePhaseLabel[order.phase] : statusLabel[order.status]
+  return <section className="chat-restored-order" aria-label="Trạng thái đơn đã lưu">
+    <strong>Đơn đã lưu · {label}</strong>
+    {order.title && <p>{order.title}</p>}
+    <p>Trạng thái ghi nhận lúc mở lại. Na không gửi lại giao dịch; dùng “Kiểm tra giao dịch” cho đơn đang chờ.</p>
+    {order.signature && <a href={explorerTx(order.signature)} target="_blank" rel="noreferrer">Xem giao dịch devnet ↗</a>}
+  </section>
 }
 
 function AutonomousSpendDetails({ reply, onDemoReplacement, canRecover }: { reply: AutonomousPurchaseResult; onDemoReplacement: () => void; canRecover: boolean }) {

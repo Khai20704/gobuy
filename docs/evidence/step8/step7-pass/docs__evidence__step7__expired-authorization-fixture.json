@@ -1,0 +1,22 @@
+{
+  "originalMint": "HVRCFvw1BjobPxQu2eC8w6MFmxBcMXNHw6iGXSNu2kbf",
+  "seller": "5SMcUtHR6n2797ZCSWG5gy1dA52GBMjHT4xgXz9mDNAD",
+  "buyer": "ErUfW92HYL2qGyrvGRU1U8WMY4gbmHFF5QxRARKk6uPU",
+  "executor": "HmwUSBhLr7awTAYUgxSt8N3FxT6DowrToRoSr2tSMwL2",
+  "intruder": "Acoj23oRYPStaYscQQmSUvNypr2RMDxCcYrpxqQWkY1Q",
+  "mandate": "APruy2thytD73KSrXLRvkx6tcMfPeWSRPKMNb7n1zRtt",
+  "vault": "8SJ6PrG6iyBD86UwrhNHLiFUyDedzPVDYU3P89A2H4ui",
+  "authorization": "5v1EGujYjopd2jdKPRsNk1696aELSuvbHna8voYNUKxd",
+  "listing": "9wVZpESYJsoqK4DjvK1uVSF45G6Yii91GxFfZbkMXrn1",
+  "sellerAta": "C2GHgbSnkt3odMi5Ax9NwQAREYLZXN6hE851pqaeGYvi",
+  "buyerAta": "8QDAoykjPsQbKKt8gZHH1XLMxzoPS2YZwLnDaDm9n5c7",
+  "listAta": "5zBUpqh5yBuG7FHMnkvn4JuJ8Ntj6xvSCnbTRELLdJVb",
+  "order": "2898dadb1d6bc945514f85e2b6665e44",
+  "price": "100000000",
+  "mandateBudget": "500000000",
+  "authBudget": "500000000",
+  "ownerSignedAuthorization": "2JNdEDYxXBLxsBe7ZpFzC9rMKQB9i3W5rYxfkoPom7LJ2ZjZG4SNuAJt6NsKQxg7PqBWk1V4k4zUT3inmwFrvZzA",
+  "authorizationSigners": [
+    "ErUfW92HYL2qGyrvGRU1U8WMY4gbmHFF5QxRARKk6uPU"
+  ]
+}

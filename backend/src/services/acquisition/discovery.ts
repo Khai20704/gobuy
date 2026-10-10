@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { HeliusError } from '../../nft/helius/HeliusClient.js'
+import { HeliusError, type HeliusFailureCode } from '../../nft/helius/HeliusClient.js'
+import { TensorAdapterError, type TensorFailureCategory } from '@gobuy/tensor-adapter'
 import { namedNFTPurchaseName, nftCandidateSchema, nftSearchIntentSchema, nftInvestmentIntentSchema, type DiscoveryReply, type NFTCandidate, type NFTSearchIntent } from '@gobuy/shared'
 import { investmentIntent } from '../nft-intelligence/NFTIntent.js'
 import type { LLMRouter } from '../../ai/LLMRouter.js'
@@ -35,7 +36,9 @@ export function acquisitionConfig(env: NodeJS.ProcessEnv = process.env) {
 }
 export function acquisitionLog(event: string, data: { count?: number; provider?: string; outcome?: string;
   code?: string; httpStatus?: number; latencyMs?: number; received?: number; accepted?: number; schemaRejected?: number;
-  budgetRejected?: number; finalCandidates?: number } = {}) {
+  budgetRejected?: number; finalCandidates?: number;
+  /** Structured, log-safe diagnostics. Never carry URLs, tokens or raw exception objects. */
+  operation?: string; category?: string; timeoutSource?: string; accountsRead?: number; network?: string } = {}) {
   console.info('[Na Acquisition]', JSON.stringify({ event, ...data }))
 }
 function providerMessage(code: ProviderFailureCode) {
@@ -50,8 +53,34 @@ function providerMessage(code: ProviderFailureCode) {
     RESPONSE_TOO_LARGE: 'Phản hồi marketplace vượt giới hạn an toàn.',
     TIMEOUT: 'Marketplace phản hồi quá thời gian.',
     NO_DATA: 'Marketplace không trả dữ liệu có thể dùng.',
+    RPC_UNSUPPORTED: 'RPC Devnet không hỗ trợ thao tác mà tính năng này bắt buộc.',
   }
   return messages[code]
+}
+
+/** Maps Helius transport failures onto the shared provider outcome vocabulary. */
+export function heliusFailureCode(error: HeliusError): ProviderFailureCode {
+  const codes: Record<HeliusFailureCode, ProviderFailureCode> = {
+    AUTH_FAILED: 'AUTHENTICATION_FAILED', RATE_LIMITED: 'RATE_LIMITED', TIMEOUT: 'TIMEOUT',
+    NETWORK_ERROR: 'NETWORK_ERROR', RPC_UNSUPPORTED: 'RPC_UNSUPPORTED',
+    INVALID_RESPONSE: 'INVALID_RESPONSE', ASSET_NOT_FOUND: 'NO_DATA',
+  }
+  return codes[error.code]
+}
+
+/**
+ * Maps a Tensor adapter failure onto the shared provider outcome vocabulary.
+ *
+ * A layout mismatch is reported as SCHEMA_MISMATCH and a non-Devnet endpoint as
+ * PROVIDER_UNAVAILABLE: both must surface as failures, never as an empty marketplace.
+ */
+export function tensorFailureCode(error: TensorAdapterError): ProviderFailureCode {
+  const codes: Record<TensorFailureCategory, ProviderFailureCode> = {
+    TIMEOUT: 'TIMEOUT', RPC_UNAVAILABLE: 'NETWORK_ERROR', HTTP_ERROR: 'PROVIDER_UNAVAILABLE',
+    RATE_LIMITED: 'RATE_LIMITED', AUTH_FAILED: 'AUTHENTICATION_FAILED',
+    RPC_UNSUPPORTED: 'RPC_UNSUPPORTED', INVALID_DATA: 'SCHEMA_MISMATCH', NETWORK_MISMATCH: 'PROVIDER_UNAVAILABLE',
+  }
+  return codes[error.category]
 }
 export const words = (text: string) => text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').match(/[a-z0-9]+/g) ?? []
 const stop = new Set('find me an a the nft collection collections artwork buc themed theme under below maximum max sol buy purchase acquire any whatever random i want need to tim cho toi tui minh mua ve duoi de va can muon giup voi bo suu tap hiem nhat rare rarest rarity cheap cheapest affordable please looking for show recommend suggest kiem xem goi y nha nhe thoi mot ngan sach tam khoang do khong qua bat ky'.split(' '))
@@ -167,6 +196,7 @@ export class DiscoveryEngine {
     const warnings: string[] = []
     const results = await Promise.all(this.providers.map(async provider => {
       const controller = new AbortController()
+      const startedAt = Date.now()
       let timer: ReturnType<typeof setTimeout> | undefined
       try {
         const candidates = await Promise.race([provider.search(intent, controller.signal), new Promise<never>((_, reject) => {
@@ -177,20 +207,39 @@ export class DiscoveryEngine {
         acquisitionLog('discovery', { provider: provider.name, count: result.candidates.length, outcome: 'success' })
         return { candidates: result.candidates, result, source: { provider: provider.name, status: 'AVAILABLE' as const } }
       } catch (error) {
-        const code: ProviderFailureCode = error instanceof HeliusError ? ({ AUTH_FAILED: 'AUTHENTICATION_FAILED',
-          RATE_LIMITED: 'RATE_LIMITED', TIMEOUT: 'TIMEOUT', NETWORK_ERROR: 'NETWORK_ERROR',
-          INVALID_RESPONSE: 'INVALID_RESPONSE', ASSET_NOT_FOUND: 'NO_DATA' } as const)[error.code]
-          : error instanceof ProviderRequestError ? error.code
-          : controller.signal.aborted ? 'TIMEOUT' : 'PROVIDER_UNAVAILABLE'
-        const status = error instanceof ProviderRequestError ? error.status : undefined
+        // Each failure keeps its own identity: an unreachable marketplace must never be reported as an
+        // empty one, and an unsupported RPC method must not be hidden behind a generic outage.
+        const code: ProviderFailureCode = error instanceof HeliusError ? heliusFailureCode(error)
+          : error instanceof TensorAdapterError ? tensorFailureCode(error)
+            : error instanceof ProviderRequestError ? error.code
+              : controller.signal.aborted ? 'TIMEOUT' : 'PROVIDER_UNAVAILABLE'
+        const status = error instanceof ProviderRequestError ? error.status
+          : error instanceof HeliusError ? error.httpStatus
+            : error instanceof TensorAdapterError ? error.httpStatus : undefined
+        const timeoutSource = error instanceof HeliusError || error instanceof TensorAdapterError ? error.timeoutSource
+          : controller.signal.aborted ? 'caller' : undefined
         if (provider.name === 'tensor-mainnet-readonly' && code === 'AUTH_REQUIRED') {
           warnings.push('Tra cứu Tensor Mainnet cần TENSOR_API_KEY trong backend/.env. Chưa có dữ liệu để kết luận collection hoặc giá; Helius API key không thay thế key Tensor.')
+        }
+        if (code === 'RPC_UNSUPPORTED') {
+          warnings.push(`${provider.name}: RPC Devnet không hỗ trợ thao tác bắt buộc (method not supported). Cần RPC hỗ trợ đầy đủ; chưa thể xác minh listing. Không dùng catalog giả thay thế.`)
         }
         warnings.push(error instanceof HeliusError && error.code === 'AUTH_FAILED'
           ? 'Helius: API key chưa được cấu hình hoặc bị từ chối (401/403). Kiểm tra HELIUS_API_KEY trong backend/.env và khởi động lại backend.'
           : `${error instanceof HeliusError ? 'Helius' : provider.name}: ${providerMessage(code)} Không dùng catalog giả thay thế.`)
-        acquisitionLog('provider_failure', { provider: provider.name, outcome: code, ...(status ? { httpStatus: status } : {}) })
-        return { candidates: [], result: undefined, source: { provider: provider.name, status: 'UNAVAILABLE' as const, code, ...(status ? { httpStatus: status } : {}) } }
+        if (error instanceof TensorAdapterError) for (const step of error.diagnostics) {
+          acquisitionLog('tensor_scan', { provider: provider.name, operation: step.operation,
+            latencyMs: step.durationMs, accountsRead: step.accountsRead, category: step.category,
+            httpStatus: step.httpStatus, timeoutSource: step.timeoutSource })
+        }
+        acquisitionLog('provider_failure', { provider: provider.name, outcome: code,
+          latencyMs: error instanceof TensorAdapterError
+            ? error.diagnostics.at(-1)?.durationMs ?? Date.now() - startedAt : Date.now() - startedAt,
+          ...(status !== undefined ? { httpStatus: status } : {}),
+          ...(timeoutSource ? { timeoutSource } : {}),
+          ...(error instanceof TensorAdapterError ? { category: error.category, operation: error.operation } : {}),
+          ...(controller.signal.aborted && !(error instanceof TensorAdapterError) ? { operation: 'provider_search' } : {}) })
+        return { candidates: [], result: undefined, source: { provider: provider.name, status: 'UNAVAILABLE' as const, code, ...(status !== undefined ? { httpStatus: status } : {}) } }
       } finally { clearTimeout(timer); controller.abort() }
     }))
     const sources = results.map(result => result.source)

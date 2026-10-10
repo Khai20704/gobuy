@@ -1,0 +1,39 @@
+{
+  "feePayer": "5U63bLafLQWNsTTj2mS2jfABeQn1v8AFPnuM2278tjFg",
+  "signers": [
+    "5U63bLafLQWNsTTj2mS2jfABeQn1v8AFPnuM2278tjFg"
+  ],
+  "instructions": [
+    {
+      "programId": "ComputeBudget111111111111111111111111111111",
+      "data": "0225420f00",
+      "accounts": []
+    },
+    {
+      "programId": "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE",
+      "data": "1f231d01ea1e4d8d0065cd1d00000000eb47c96a0000000006b5efb175d780346c18fa61f588190e5981c4668d651d67ad73c36e31180fdf2a36461c78f7e0d3e11d29937dfe33420ef7da01bc50528c3111a5ff6b664fb9425f223397d7b2a827518e03a954e7218e8af8be80c475b03a1399eeb13b2f23",
+      "accounts": [
+        {
+          "address": "5U63bLafLQWNsTTj2mS2jfABeQn1v8AFPnuM2278tjFg",
+          "isSigner": true,
+          "isWritable": true
+        },
+        {
+          "address": "H2b7VMZHR53gzHFNRTX3Qg5hNCHaJ229kJrSmqdxVHr4",
+          "isSigner": false,
+          "isWritable": false
+        },
+        {
+          "address": "6p4FVymBjUaASYwsKgJJCDoHJRZoQwzysujdpbdRNWBj",
+          "isSigner": false,
+          "isWritable": true
+        },
+        {
+          "address": "11111111111111111111111111111111",
+          "isSigner": false,
+          "isWritable": false
+        }
+      ]
+    }
+  ]
+}

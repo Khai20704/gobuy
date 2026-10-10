@@ -22,7 +22,7 @@ export async function readNftPurchaseAuthorization(client: MandateProgramClient,
   const mandate = await client.read(owner)
   if (!mandate) return null
   const address = nftAuthorizationAddress(client.programId, new PublicKey(mandate.address))
-  const info = await client.connection.getAccountInfo(address, 'confirmed')
+  const info = await client.connection.getAccountInfo(address, 'finalized')
   if (!info) return null
   if (!info.owner.equals(client.programId)) {
     throw new InputError('Tài khoản uỷ quyền mua NFT không thuộc chương trình Na Vault. Na từ chối sử dụng.')

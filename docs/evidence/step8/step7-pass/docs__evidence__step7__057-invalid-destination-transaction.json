@@ -1,0 +1,223 @@
+{
+  "signature": "ecyB8mpjXuVdheG3rvKqqeihiH5PKn756GidtC1n6hXDVJbHrRHcgDfvcVrQskW6LWue1TMb4sc1qAZjiZQX8WS",
+  "blockTime": 1791572474,
+  "meta": {
+    "computeUnitsConsumed": 38581,
+    "costUnits": 45202,
+    "err": {
+      "InstructionError": [
+        1,
+        {
+          "Custom": 6020
+        }
+      ]
+    },
+    "fee": 5000,
+    "innerInstructions": [
+      {
+        "index": 1,
+        "instructions": [
+          {
+            "accounts": [
+              0,
+              1
+            ],
+            "data": "11114Yini18cyWdoT2b5xcdaJ168efg3h2xHTiEaE7QYPtxUsnJCypaVM7bNqP9Ac7T9YS",
+            "programIdIndex": 11,
+            "stackHeight": 2
+          }
+        ]
+      }
+    ],
+    "loadedAddresses": {
+      "readonly": [],
+      "writable": []
+    },
+    "logMessages": [
+      "Program ComputeBudget111111111111111111111111111111 invoke [1]",
+      "Program ComputeBudget111111111111111111111111111111 success",
+      "Program CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE invoke [1]",
+      "Program log: Instruction: BuyNftFromMandate",
+      "Program 11111111111111111111111111111111 invoke [2]",
+      "Program 11111111111111111111111111111111 success",
+      "Program log: AnchorError occurred. Error Code: InvalidBuyerTokenAccount. Error Number: 6020. Error Message: The NFT destination is not the owner's associated token account.",
+      "Program CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE consumed 38431 of 999794 compute units",
+      "Program CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE failed: custom program error: 0x1784"
+    ],
+    "postBalances": [
+      2999995000,
+      0,
+      2976340360,
+      15115600,
+      2150640,
+      2303760,
+      0,
+      3097200,
+      500890880,
+      2039280,
+      890880,
+      1,
+      2494644720,
+      1030080,
+      1461600,
+      1141440,
+      1141440,
+      1141440,
+      1,
+      1141440,
+      0,
+      1141440,
+      1141440
+    ],
+    "postTokenBalances": [
+      {
+        "accountIndex": 9,
+        "mint": "AC6mTWdxuvshZojkefyXyLhfdJ8nNuUQJBL6kCCAFS2G",
+        "owner": "9MLkvKUJHyJSfVxLt99pQnQWj9rnCj8piqJjpcQvi8q6",
+        "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "uiTokenAmount": {
+          "amount": "1",
+          "decimals": 0,
+          "uiAmount": 1,
+          "uiAmountString": "1"
+        }
+      }
+    ],
+    "preBalances": [
+      3000000000,
+      0,
+      2976340360,
+      15115600,
+      2150640,
+      2303760,
+      0,
+      3097200,
+      500890880,
+      2039280,
+      890880,
+      1,
+      2494644720,
+      1030080,
+      1461600,
+      1141440,
+      1141440,
+      1141440,
+      1,
+      1141440,
+      0,
+      1141440,
+      1141440
+    ],
+    "preTokenBalances": [
+      {
+        "accountIndex": 9,
+        "mint": "AC6mTWdxuvshZojkefyXyLhfdJ8nNuUQJBL6kCCAFS2G",
+        "owner": "9MLkvKUJHyJSfVxLt99pQnQWj9rnCj8piqJjpcQvi8q6",
+        "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "uiTokenAmount": {
+          "amount": "1",
+          "decimals": 0,
+          "uiAmount": 1,
+          "uiAmountString": "1"
+        }
+      }
+    ],
+    "rewards": [],
+    "status": {
+      "Err": {
+        "InstructionError": [
+          1,
+          {
+            "Custom": 6020
+          }
+        ]
+      }
+    }
+  },
+  "slot": 135,
+  "transaction": {
+    "message": {
+      "header": {
+        "numReadonlySignedAccounts": 0,
+        "numReadonlyUnsignedAccounts": 12,
+        "numRequiredSignatures": 1
+      },
+      "accountKeys": [
+        "2ksnLEq6AA8hRiDvVME7pBYozknVEHTmcVo9SuJV9N75",
+        "3nYUtvTqkcyyTHqHW4wyo4XUBdDs41BL2kmjE1MRKzaR",
+        "4DiDfoQgK8AEkBGByLByZc7AWMDwMTzw1qk6DuLFtLri",
+        "4fHxJiwLES15bsENebzivqpQZtEKopTFKHQbSmoWi5XE",
+        "6W9SZSM4xepPgFJ16HpUqqhLDL9uCyrraUUAKvpTqcj6",
+        "7fNKK2Hoitcy9wVYDrwUrAvrsDejY7qakT4mjanUUmWZ",
+        "8E8fjBS8Ev5oFw8bZ86fMuWc9p59QNUHcndK2So3bdRo",
+        "9MLkvKUJHyJSfVxLt99pQnQWj9rnCj8piqJjpcQvi8q6",
+        "C7w9pA3Rc25pa5xqu3cY7cUgDFpzVjk27dSuvhYCTmCP",
+        "CUmQaCHWFGe2hUN7vsVyZ2gmCPnp3rLLMynobuqBNR6s",
+        "HPzPv6cwiiW6UCv6S8A8i6ptHp9sxR5F736HnxupYWry",
+        "11111111111111111111111111111111",
+        "4MNvwz8BnniEoBzDVjw2CWXcAvG7cPhS3V58Jedn4ifL",
+        "5hc5Nj35JmYKbLQX4QoFsCbot4DJxEd4WTuVNUUPNAmh",
+        "AC6mTWdxuvshZojkefyXyLhfdJ8nNuUQJBL6kCCAFS2G",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg",
+        "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE",
+        "ComputeBudget111111111111111111111111111111",
+        "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+        "Sysvar1nstructions1111111111111111111111111",
+        "TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+      ],
+      "recentBlockhash": "4HL86XQnzF34L1VZhJDjZ75ktQP3B38tEKmxAtW7Qehw",
+      "instructions": [
+        {
+          "accounts": [],
+          "data": "EJJkTy",
+          "programIdIndex": 18,
+          "stackHeight": 1
+        },
+        {
+          "accounts": [
+            0,
+            4,
+            5,
+            8,
+            1,
+            11,
+            10,
+            12,
+            6,
+            9,
+            7,
+            14,
+            2,
+            8,
+            21,
+            21,
+            2,
+            22,
+            15,
+            21,
+            11,
+            3,
+            13,
+            21,
+            21,
+            21,
+            16,
+            19,
+            20,
+            21
+          ],
+          "data": "5amcLudRcBzETStrWyoZ3jZgonPRsitiMHsxxgDajzxThXq9HoX8AcPnz422v8P9RZGkcaDQPf3j7UR8sD2FkbP5",
+          "programIdIndex": 17,
+          "stackHeight": 1
+        }
+      ],
+      "indexToProgramIds": {}
+    },
+    "signatures": [
+      "ecyB8mpjXuVdheG3rvKqqeihiH5PKn756GidtC1n6hXDVJbHrRHcgDfvcVrQskW6LWue1TMb4sc1qAZjiZQX8WS"
+    ]
+  },
+  "version": "legacy"
+}

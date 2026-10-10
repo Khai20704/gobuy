@@ -1,0 +1,223 @@
+{
+  "signature": "5GFu66NU8u6JnMbPVXc8JZaFm1z9jDVCxnzuowr2wDDFou5nFfgzGENWy7Y4gf3NsecfozqUeSBy7AjscoojG5DG",
+  "blockTime": 1791572457,
+  "meta": {
+    "computeUnitsConsumed": 22414,
+    "costUnits": 29035,
+    "err": {
+      "InstructionError": [
+        1,
+        {
+          "Custom": 6013
+        }
+      ]
+    },
+    "fee": 5000,
+    "innerInstructions": [
+      {
+        "index": 1,
+        "instructions": [
+          {
+            "accounts": [
+              0,
+              9
+            ],
+            "data": "11114Yini18cyWdoT2b5xcdaJ168efg3h2xHTiEaE7QYPtxUsnJCypaVM7bNqP9Ac7T9YS",
+            "programIdIndex": 11,
+            "stackHeight": 2
+          }
+        ]
+      }
+    ],
+    "loadedAddresses": {
+      "readonly": [],
+      "writable": []
+    },
+    "logMessages": [
+      "Program ComputeBudget111111111111111111111111111111 invoke [1]",
+      "Program ComputeBudget111111111111111111111111111111 success",
+      "Program CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE invoke [1]",
+      "Program log: Instruction: BuyNftFromMandate",
+      "Program 11111111111111111111111111111111 invoke [2]",
+      "Program 11111111111111111111111111111111 success",
+      "Program log: AnchorError occurred. Error Code: PurchaseAuthorizationExpired. Error Number: 6013. Error Message: The NFT purchase authorization has expired.",
+      "Program CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE consumed 22264 of 999815 compute units",
+      "Program CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE failed: custom program error: 0x177d"
+    ],
+    "postBalances": [
+      2999995000,
+      2976340360,
+      2303760,
+      2039280,
+      890880,
+      0,
+      500890880,
+      3097200,
+      2150640,
+      0,
+      15115600,
+      1,
+      1030080,
+      1141440,
+      1141440,
+      1141440,
+      1,
+      2494644720,
+      1461600,
+      1141440,
+      0,
+      1141440,
+      1141440
+    ],
+    "postTokenBalances": [
+      {
+        "accountIndex": 3,
+        "mint": "HVRCFvw1BjobPxQu2eC8w6MFmxBcMXNHw6iGXSNu2kbf",
+        "owner": "9wVZpESYJsoqK4DjvK1uVSF45G6Yii91GxFfZbkMXrn1",
+        "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "uiTokenAmount": {
+          "amount": "1",
+          "decimals": 0,
+          "uiAmount": 1,
+          "uiAmountString": "1"
+        }
+      }
+    ],
+    "preBalances": [
+      3000000000,
+      2976340360,
+      2303760,
+      2039280,
+      890880,
+      0,
+      500890880,
+      3097200,
+      2150640,
+      0,
+      15115600,
+      1,
+      1030080,
+      1141440,
+      1141440,
+      1141440,
+      1,
+      2494644720,
+      1461600,
+      1141440,
+      0,
+      1141440,
+      1141440
+    ],
+    "preTokenBalances": [
+      {
+        "accountIndex": 3,
+        "mint": "HVRCFvw1BjobPxQu2eC8w6MFmxBcMXNHw6iGXSNu2kbf",
+        "owner": "9wVZpESYJsoqK4DjvK1uVSF45G6Yii91GxFfZbkMXrn1",
+        "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "uiTokenAmount": {
+          "amount": "1",
+          "decimals": 0,
+          "uiAmount": 1,
+          "uiAmountString": "1"
+        }
+      }
+    ],
+    "rewards": [],
+    "status": {
+      "Err": {
+        "InstructionError": [
+          1,
+          {
+            "Custom": 6013
+          }
+        ]
+      }
+    }
+  },
+  "slot": 93,
+  "transaction": {
+    "message": {
+      "header": {
+        "numReadonlySignedAccounts": 0,
+        "numReadonlyUnsignedAccounts": 12,
+        "numRequiredSignatures": 1
+      },
+      "accountKeys": [
+        "HmwUSBhLr7awTAYUgxSt8N3FxT6DowrToRoSr2tSMwL2",
+        "5SMcUtHR6n2797ZCSWG5gy1dA52GBMjHT4xgXz9mDNAD",
+        "5v1EGujYjopd2jdKPRsNk1696aELSuvbHna8voYNUKxd",
+        "5zBUpqh5yBuG7FHMnkvn4JuJ8Ntj6xvSCnbTRELLdJVb",
+        "759TM4hkRVeGXQmMApvye5VYih2qSLM4fs1N7uzuibk9",
+        "8QDAoykjPsQbKKt8gZHH1XLMxzoPS2YZwLnDaDm9n5c7",
+        "8SJ6PrG6iyBD86UwrhNHLiFUyDedzPVDYU3P89A2H4ui",
+        "9wVZpESYJsoqK4DjvK1uVSF45G6Yii91GxFfZbkMXrn1",
+        "APruy2thytD73KSrXLRvkx6tcMfPeWSRPKMNb7n1zRtt",
+        "DU1ejucPhuiNuwHsrhyKU79ssJsgXpzqob1pkWixSNGq",
+        "GDYrZikPpNctwMmP37HHTvPvbQDwsQTTYkNfRjULmvTu",
+        "11111111111111111111111111111111",
+        "9SEdFAsjJr2jemdQbfm5Zt2e3Nb4sLYY4pZ35BMm4ydT",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        "auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg",
+        "CHjdqooB7TrussJoZoboFP5TtdCspoHtvPpqoshbr5zE",
+        "ComputeBudget111111111111111111111111111111",
+        "ErUfW92HYL2qGyrvGRU1U8WMY4gbmHFF5QxRARKk6uPU",
+        "HVRCFvw1BjobPxQu2eC8w6MFmxBcMXNHw6iGXSNu2kbf",
+        "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+        "Sysvar1nstructions1111111111111111111111111",
+        "TCMPhJdwDryooaGtiocG1u3xcYbRpiJzb283XfCZsDp",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+      ],
+      "recentBlockhash": "RLCX5QRqtqdC7KA1cdPgNoaYgbsUd2224MiPQevpKvY",
+      "instructions": [
+        {
+          "accounts": [],
+          "data": "EqSVPD",
+          "programIdIndex": 16,
+          "stackHeight": 1
+        },
+        {
+          "accounts": [
+            0,
+            8,
+            2,
+            6,
+            9,
+            11,
+            4,
+            17,
+            5,
+            3,
+            7,
+            18,
+            1,
+            6,
+            21,
+            21,
+            1,
+            22,
+            13,
+            21,
+            11,
+            10,
+            12,
+            21,
+            21,
+            21,
+            14,
+            19,
+            20,
+            21
+          ],
+          "data": "5amcLudRcBzAQEjPSfNbUUF59ohvDAwUByKdMn8Q6Xt77S6EL5B3FPZsq5hoXE3sKLL8n2XRauh4nFX16ELYsKTu",
+          "programIdIndex": 15,
+          "stackHeight": 1
+        }
+      ],
+      "indexToProgramIds": {}
+    },
+    "signatures": [
+      "5GFu66NU8u6JnMbPVXc8JZaFm1z9jDVCxnzuowr2wDDFou5nFfgzGENWy7Y4gf3NsecfozqUeSBy7AjscoojG5DG"
+    ]
+  },
+  "version": "legacy"
+}

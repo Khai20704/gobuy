@@ -1,4 +1,5 @@
-import { PublicKey, Transaction } from '@solana/web3.js'
+import { randomUUID } from 'node:crypto'
+import { PublicKey } from '@solana/web3.js'
 import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { buildTensorLegacyBuyInstruction, type TensorBuyInstruction } from '@gobuy/tensor-adapter'
 import {
@@ -10,9 +11,11 @@ import { assetStore, type AssetStore } from '../../persistence/AssetStore.js'
 import { InputError } from '../../schemas/search.js'
 import { requiredMandateClient, type MandateProgramClient } from '../mandate/MandateProgramClient.js'
 import { mandateVaultAddress } from '../mandate/MandateGuard.js'
-import { rejectionCodeOf, rejectionFromLogs } from '../mandate/programErrors.js'
+import { rejectionCodeOf } from '../mandate/programErrors.js'
 import { decodeNftPurchaseAuthorization, decodeNftPurchaseReceipt } from './nftPurchaseAccounts.js'
 import { buyNftFromMandateInstruction, nftAuthorizationAddress, purchaseReceiptAddress } from './nftPurchaseInstructions.js'
+import { purchaseTransaction, assertPurchasePacketSize } from './purchaseTransaction.js'
+import { verifyPurchaseDelivery } from './verifyPurchaseDelivery.js'
 import { orderIdFor } from './orderIdentity.js'
 import { assertTensorBuyLegacyInstruction, IX_BUYER_TA, tensorRemainingAccounts } from './tensorBuyLegacyLayout.js'
 
@@ -49,6 +52,9 @@ export type NftPurchaseOrder = {
   receiptAddress: string
   status: NftPurchaseOrderStatus
   signature: string | null
+  reservationToken?: string
+  blockhash?: string
+  lastValidBlockHeight?: number
   attempts: number
   createdAt: string
   updatedAt: string
@@ -93,6 +99,7 @@ export class NftPurchaseService {
       maxTotalDebitLamports: input.priceLamports > 0n ? maxAllowedDebit(input.priceLamports).toString() : '0',
       signature: null,
       receipt: null,
+      delivery: null,
       rejection: input.rejection ?? null,
       message: input.message,
     }
@@ -109,61 +116,53 @@ export class NftPurchaseService {
     const client = this.client()
     await assertDevnet(client.connection, { network: 'devnet', rpcUrl: client.connection.rpcEndpoint })
     const address = new PublicKey(order.receiptAddress)
-    const info = await client.connection.getAccountInfo(address, 'confirmed')
+    const info = await client.connection.getAccountInfo(address, 'finalized')
     if (info) {
-      if (!info.owner.equals(client.programId)) throw new InputError('Biên nhận on-chain không thuộc chương trình Na Vault.')
+      if (!info.owner.equals(client.programId)) throw new InputError('Receipt owner mismatch; do not retry.')
       const receipt = decodeNftPurchaseReceipt(order.receiptAddress, info.data)
-      if (receipt.owner !== order.owner || receipt.mint !== order.mint || receipt.orderId !== order.orderId) {
-        throw new InputError('Biên nhận on-chain không khớp đơn mua này. Cần kiểm tra thủ công; không mua lại.')
+      const mandate = PublicKey.findProgramAddressSync([Buffer.from('mandate'), new PublicKey(order.owner).toBuffer()], client.programId)[0]
+      const authorization = nftAuthorizationAddress(client.programId, mandate)
+      if (receipt.version !== 1 || receipt.owner !== order.owner || receipt.mint !== order.mint || receipt.orderId !== order.orderId
+        || receipt.listing !== order.listing || receipt.marketplace !== TENSOR_MARKETPLACE_PROGRAM_ID
+        || receipt.mandate !== mandate.toBase58() || receipt.authorization !== authorization.toBase58()
+        || receipt.address !== purchaseReceiptAddress(client.programId, mandate, Buffer.from(order.orderId, 'hex')).toBase58()
+        || receipt.priceLamports !== order.priceLamports || BigInt(receipt.totalDebitLamports) < BigInt(order.priceLamports)
+        || BigInt(receipt.totalDebitLamports) > BigInt(order.maxTotalDebitLamports)) {
+        throw new InputError('Receipt fields do not match the original order; do not retry.')
       }
-      const signatures = await client.connection.getSignaturesForAddress(address, { limit: 10 }, 'confirmed')
-      const signature = signatures.find(item => !item.err)?.signature ?? order.signature
+      // New attempts persist the original signature before broadcast. Legacy records may need history recovery.
+      const signature = order.signature ?? (await client.connection.getSignaturesForAddress(address, { limit: 10 }, 'finalized'))
+        .find(item => !item.err)?.signature
+      if (!signature) return this.result(order, null)
+      const tx = await client.connection.getParsedTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
+      if (!tx) return this.result(order, null)
+      const delivery = verifyPurchaseDelivery(tx, signature, client.programId, receipt)
       order.status = 'CONFIRMED'
       order.signature = signature
       order.updatedAt = new Date().toISOString()
-      order.message = 'Đã mua NFT gốc trên Tensor Devnet và xác nhận biên nhận on-chain. NFT được chuyển trực tiếp vào ví của bạn.'
+      order.message = 'Đã xác minh receipt và NFT gốc chuyển vào ví trong giao dịch finalized.'
       await this.orders.put(userId, order.discoveryId, order)
-      return this.result(order, receipt)
+      return this.result(order, receipt, delivery)
     }
     if (order.signature) {
       const status = (await client.connection.getSignatureStatuses([order.signature], { searchTransactionHistory: true })).value[0]
-      if (status?.err) {
+      if (status?.confirmationStatus === 'finalized' && status.err) {
         order.status = 'FAILED'
-        order.updatedAt = new Date().toISOString()
-        order.message = 'Giao dịch mua NFT gốc thất bại trên Devnet. Không có biên nhận nào được ghi; không mua lại tự động.'
+        order.message = 'Giao dịch thất bại đã finalized. Không mua lại tự động.'
         await this.orders.put(userId, order.discoveryId, order)
-        return this.result(order, null)
       }
     }
     return this.result(order, null)
   }
 
-  private result(order: NftPurchaseOrder, receipt: NftPurchaseResult['receipt']): NftPurchaseResult {
-    const status: NftPurchaseResult['status'] = order.status === 'CONFIRMED' ? 'CONFIRMED'
-      : order.status === 'FAILED' ? 'FAILED'
-      : order.status === 'UNKNOWN' ? 'PENDING' : 'PENDING'
-    return {
-      orderId: order.orderId,
-      status,
-      deliveryMode: 'ORIGINAL_NFT_TRANSFER',
-      network: 'devnet',
-      marketplace: 'Tensor',
-      mint: order.mint,
-      listing: order.listing,
-      seller: order.seller,
-      priceLamports: order.priceLamports,
-      maxTotalDebitLamports: order.maxTotalDebitLamports,
-      signature: order.signature,
-      receipt,
-      rejection: null,
-      message: order.message,
-    }
+  private result(order: NftPurchaseOrder, receipt: NftPurchaseResult['receipt'], delivery: NftPurchaseResult['delivery'] = null): NftPurchaseResult {
+    const status: NftPurchaseResult['status'] = receipt && delivery ? 'CONFIRMED' : order.status === 'FAILED' ? 'FAILED' : 'PENDING'
+    return { orderId: order.orderId, status, deliveryMode: 'ORIGINAL_NFT_TRANSFER', network: 'devnet', marketplace: 'Tensor',
+      mint: order.mint, listing: order.listing, seller: order.seller, priceLamports: order.priceLamports,
+      maxTotalDebitLamports: order.maxTotalDebitLamports, signature: order.signature, receipt, delivery, rejection: null,
+      message: status === 'PENDING' ? 'Đang đối soát chữ ký và receipt ban đầu. Không mua lại.' : order.message }
   }
 
-  /**
-   * Validates the order, reserves it durably, then - only when live execution is enabled - signs
-   * with the executor and broadcasts. Nothing is sent before the reservation exists.
-   */
   async purchase(userId: string, request: NftPurchaseRequest): Promise<NftPurchaseResult> {
     const parsed = autonomousNFTCandidateSchema.safeParse(request.candidate)
     if (!parsed.success) {
@@ -230,6 +229,9 @@ export class NftPurchaseService {
       return this.blocked({ ...base, status: 'NOT_SUBMITTED', rejection: verdict.rejection,
         message: explainNftPurchaseRejection(verdict.rejection) })
     }
+    if (verdict.ceilingLamports > mandate.maxBudgetLamports - mandate.spentLamports) {
+      return this.blocked({ ...base, status: 'NOT_SUBMITTED', rejection: 'BudgetExceeded', message: explainMandateRejection('BudgetExceeded') })
+    }
     if (!this.live()) {
       return this.blocked({ ...base, status: 'PURCHASE_DISABLED',
         message: 'Mua NFT gốc đang tắt (NFT_PURCHASE_LIVE_ENABLED). Chưa có giao dịch nào được tạo.' })
@@ -256,17 +258,22 @@ export class NftPurchaseService {
     const order: NftPurchaseOrder = { orderId: orderId.toString('hex'), discoveryId: request.discoveryId, owner: mandate.owner,
       mint, listing, seller, priceLamports: price.toString(), maxTotalDebitLamports: verdict.ceilingLamports.toString(),
       receiptAddress: purchaseReceiptAddress(client.programId, mandateKey, orderId).toBase58(), status: 'RESERVED',
-      signature: null, attempts: 0, createdAt: now, updatedAt: now, message: 'Đã giữ chỗ đơn mua NFT gốc. Chưa gửi giao dịch.' }
+      reservationToken: randomUUID(), signature: null, attempts: 0, createdAt: now, updatedAt: now, message: 'Đã giữ chỗ đơn mua NFT gốc. Chưa gửi giao dịch.' }
     // Persisted before anything is signed: an unknown outcome can only reconcile, never resubmit.
     await this.orders.put(userId, request.discoveryId, order, true)
     const stored = await this.orders.get(userId, request.discoveryId)
-    if (!stored || stored.orderId !== order.orderId) return this.reconcile(userId, stored ?? order)
+    if (!stored || stored.reservationToken !== order.reservationToken) return this.reconcile(userId, stored ?? order)
 
-    const transaction = new Transaction({ feePayer: agent.publicKey,
-      ...await client.connection.getLatestBlockhash('confirmed') })
-      .add(buyNftFromMandateInstruction(client.programId, { executor: agent.publicKey, owner: mandate.owner, orderId,
+    const validity = await client.connection.getLatestBlockhash('confirmed')
+    const transaction = purchaseTransaction(agent.publicKey, validity,
+      buyNftFromMandateInstruction(client.programId, { executor: agent.publicKey, owner: mandate.owner, orderId,
         expectedMint: new PublicKey(mint), maxPriceLamports: price, tensorAccounts: tensorRemainingAccounts(tensor) }))
+    if (!this.live()) return this.result(order, null)
     transaction.sign(agent)
+    assertPurchasePacketSize(transaction)
+    order.signature = base58Encode(transaction.signature!)
+    order.blockhash = validity.blockhash
+    order.lastValidBlockHeight = validity.lastValidBlockHeight
     order.attempts += 1
     order.status = 'SUBMITTED'
     order.updatedAt = new Date().toISOString()
@@ -280,7 +287,7 @@ export class NftPurchaseService {
       // A broadcast rejection (preflight/simulation) moved no lamport: terminal, never retried.
       const rejection = rejectionCodeOf(error)
       const simulated = (error as { message?: string })?.message?.startsWith('Simulation failed.') === true
-      order.status = rejection || simulated ? 'FAILED' : 'UNKNOWN'
+      order.status = simulated ? 'FAILED' : 'UNKNOWN'
       order.signature = transaction.signature ? base58Encode(transaction.signature) : null
       order.updatedAt = new Date().toISOString()
       order.message = rejection ? explainMandateRejection(rejection)
@@ -289,30 +296,7 @@ export class NftPurchaseService {
       await this.orders.put(userId, request.discoveryId, order)
       return this.result(order, null)
     }
-    order.signature = signature
-    order.updatedAt = new Date().toISOString()
-    await this.orders.put(userId, request.discoveryId, order)
-
-    let logs: readonly string[] | null
-    try {
-      logs = await client.confirm(signature, transaction.recentBlockhash, transaction.lastValidBlockHeight)
-    } catch {
-      order.status = 'UNKNOWN'
-      order.updatedAt = new Date().toISOString()
-      order.message = 'Đang chờ xác nhận Devnet. Na không gửi lại; hãy kiểm tra trạng thái đơn.'
-      await this.orders.put(userId, request.discoveryId, order)
-      return this.result(order, null)
-    }
-    if (logs) {
-      const rejection = rejectionFromLogs(logs)
-      order.status = 'FAILED'
-      order.updatedAt = new Date().toISOString()
-      order.message = rejection ? explainMandateRejection(rejection)
-        : 'Giao dịch mua NFT gốc thất bại trên Devnet. Biên nhận và việc chuyển NFT đã bị huỷ toàn bộ.'
-      await this.orders.put(userId, request.discoveryId, order)
-      return this.result(order, null)
-    }
-    // The receipt is the authoritative proof; reconciliation reads it rather than trusting the send.
+    if (signature !== order.signature) throw new InputError('RPC signature mismatch. Reconcile original signature; do not retry.')
     return this.reconcile(userId, order)
   }
 }

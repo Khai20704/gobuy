@@ -56,8 +56,16 @@ export async function signPhantomMessage(provider: PhantomProvider, message: str
   return btoa(String.fromCharCode(...signature))
 }
 export async function connectPhantom(provider: PhantomProvider) {
-  try { return await provider.connect() }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeoutError = new Error('Phantom chưa phản hồi sau 30 giây. Mở extension Phantom, mở khóa và xử lý yêu cầu kết nối đang chờ, rồi bấm kết nối lại.')
+  try {
+    return await Promise.race([
+      provider.connect(),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(timeoutError), 30000) }),
+    ])
+  }
   catch (error) {
+    if (error === timeoutError) throw error
     const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
     if (code === 4001) throw new Error('Bạn đã từ chối kết nối Phantom. Bấm kết nối lại khi sẵn sàng.')
     if (code === -32002) throw new Error('Phantom đang có yêu cầu chờ. Mở extension và xử lý cửa sổ kết nối trước đó.')
@@ -65,6 +73,7 @@ export async function connectPhantom(provider: PhantomProvider) {
     const detail = typeof code === 'number' ? ` (mã ${code})` : ''
     throw new Error(`Phantom không hoàn tất kết nối${detail}. Thử tải lại trang và kết nối lại.`, { cause: error })
   }
+  finally { if (timer !== undefined) clearTimeout(timer) }
 }
 export function findPhantomProvider(): PhantomProvider | undefined {
   // Only accept a provider identifying itself as Phantom, even with other wallets installed.
