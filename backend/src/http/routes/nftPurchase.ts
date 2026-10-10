@@ -62,7 +62,13 @@ export function nftPurchaseRoutes(authenticate: RequestHandler, origins: string[
     const input = parse(createNftPurchaseAuthorizationInputSchema.extend({ owner: walletAddressSchema,
       transaction: z.string().min(32).max(40_000) }).strict(), request.body)
     await wallets.require(response.locals.identity.uid, input.owner)
-    response.json(await authorizations.submit(input.owner, input, input.transaction))
+    try { response.json(await authorizations.submit(input.owner, input, input.transaction)) }
+    catch (error) {
+      // InputError is raised only before broadcast; transport ambiguity returns PENDING.
+      if (!(error instanceof InputError)) throw error
+      response.json({ action: 'authorize_nft', status: 'FAILED', signature: null,
+        message: error.message })
+    }
   })
 
   /**
@@ -83,6 +89,9 @@ export function nftPurchaseRoutes(authenticate: RequestHandler, origins: string[
     }
     const candidate = saved.reply.candidates.find(item => item.id === input.candidateId)
     if (!candidate) throw new InputError('NFT không thuộc kết quả tìm kiếm này.')
+    if (BigInt(candidate.listing.priceLamports) > BigInt(saved.reply.intent.maximumLamports)) {
+      throw new InputError('Giá NFT vượt ngân sách của yêu cầu BUY ban đầu.')
+    }
     response.json(await purchases.purchase(uid, { discoveryId: input.discoveryId, owner: input.owner, candidate }))
   })
 

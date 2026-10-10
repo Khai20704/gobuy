@@ -1,4 +1,4 @@
-import { PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
+import { ComputeBudgetProgram, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import { assertDevnet, base58Encode, createNftPurchaseAuthorizationInputSchema, formatSol, solToLamports,
   type CreateNftPurchaseAuthorizationInput } from '@gobuy/shared'
 import { InputError } from '../../schemas/search.js'
@@ -66,7 +66,8 @@ export class NftPurchaseAuthorizationClient {
     const instruction = createNftPurchaseAuthorizationInstruction(client.programId, ownerKey,
       { maxTotalDebitLamports, expiresAt, executor: agent.publicKey, recipient: ownerKey })
     const transaction = new Transaction({ feePayer: ownerKey, ...await client.connection.getLatestBlockhash('confirmed') })
-      .add(instruction)
+      .add(instruction, ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10_000 }))
     return {
       action: 'authorize_nft',
       owner: ownerKey.toBase58(),
@@ -104,7 +105,7 @@ export class NftPurchaseAuthorizationClient {
     const tags = new Set<number>()
     for (const ix of compute) {
       const tag = ix.data[0]
-      if (ix.keys.length || tags.has(tag) || !((tag === 2 && ix.data.length === 5 && ix.data.readUInt32LE(1) <= 1_400_000)
+      if (ix.keys.length || tags.has(tag) || !((tag === 2 && ix.data.length === 5 && ix.data.readUInt32LE(1) > 0 && ix.data.readUInt32LE(1) <= 1_400_000)
         || (tag === 3 && ix.data.length === 9 && ix.data.readBigUInt64LE(1) <= 10_000n))) {
         throw new InputError('Compute budget không hợp lệ hoặc vượt mức phí cho phép.')
       }

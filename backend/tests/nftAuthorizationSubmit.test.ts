@@ -59,3 +59,25 @@ test('authorization refuses invalid signature and preserves pending on transport
   const result = await f.service.submit(owner, f.input, tx.serialize().toString('base64'))
   assert.equal(result.status, 'PENDING'); assert.ok(result.signature)
 })
+
+test('builder pins valid compute settings and wallet fee mutation remains rejected before broadcast', async () => {
+  const f = fixture(), owner = f.owner.publicKey.toBase58()
+  const built = await f.service.build(owner, f.input)
+  const tx = Transaction.from(Buffer.from(built.transaction, 'base64'))
+  const compute = tx.instructions.filter(ix => ix.programId.equals(ComputeBudgetProgram.programId))
+  assert.equal(compute.length, 2)
+  assert.equal(compute[0].data.readUInt32LE(1), 200_000)
+  assert.equal(compute[1].data.readBigUInt64LE(1), 10_000n)
+  compute[1].data.writeBigUInt64LE(10_001n, 1); tx.sign(f.owner)
+  await assert.rejects(f.service.submit(owner, f.input, tx.serialize().toString('base64')), /Compute budget/)
+  assert.equal(f.broadcasts(), 0)
+})
+
+for (const units of [0, 1_400_001]) test('compute limit rejects ' + units, async () => {
+  const f = fixture(), owner = f.owner.publicKey.toBase58()
+  const built = await f.service.build(owner, f.input)
+  const tx = Transaction.from(Buffer.from(built.transaction, 'base64'))
+  tx.instructions[1] = ComputeBudgetProgram.setComputeUnitLimit({ units }); tx.sign(f.owner)
+  await assert.rejects(f.service.submit(owner, f.input, tx.serialize().toString('base64')), /Compute budget/)
+  assert.equal(f.broadcasts(), 0)
+})
