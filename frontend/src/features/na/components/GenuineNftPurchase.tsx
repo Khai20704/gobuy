@@ -9,7 +9,7 @@ import { signDevnetTransaction } from '../../../services/solana/walletSafety'
 import { devnetConnection, requireDevnet } from '../../../services/solana/network'
 import { explorerTx, explorerAccount } from '../../../services/solana/links'
 import { genuineDeliveryVerified, genuineListingAvailable } from '../genuinePurchase'
-import { authorizationRetrySafe, matchesPurchaseContinuation, type PurchaseContinuation } from '../authorizationRecovery'
+import { reconcileAuthorization, matchesPurchaseContinuation, type PurchaseContinuation } from '../authorizationRecovery'
 
 export function GenuineNftPurchase({ discovery, candidate, owner, ready, disabled, storageScope, onPending, onResult }:
   { discovery: DiscoveryReply; candidate: NFTCandidate; owner: string; ready: boolean; disabled: boolean; storageScope: string;
@@ -17,6 +17,7 @@ export function GenuineNftPurchase({ discovery, candidate, owner, ready, disable
   const [authorization, setAuthorization] = useState<SerializedNftPurchaseAuthorization | null>(null)
   const [live, setLive] = useState(false), [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false)
   const [message, setMessage] = useState(''), [pendingAuth, setPendingAuth] = useState(false)
+  const [reconciling, setReconciling] = useState(false)
   const wallet = useRef(owner), lock = useRef(false)
   wallet.current = owner
   const authKey = storageScope + ':nft-authorization:' + owner
@@ -38,18 +39,30 @@ export function GenuineNftPurchase({ discovery, candidate, owner, ready, disable
       if (saved && !lock.current) {
         const attempt = JSON.parse(saved)
         const connection = devnetConnection(); await requireDevnet(connection)
-        if (await authorizationRetrySafe(attempt, connection)) {
+        const outcome = await reconcileAuthorization(attempt, connection)
+        if (outcome === 'RETRY_SAFE' || outcome === 'CONFIRMED') {
           // Read the finalized account again after checking expiry, before unlocking.
           const latest = await nftPurchaseApi.authorization(current)
           if (wallet.current !== current || localStorage.getItem(authKey) !== saved) return
           setAuthorization(latest)
-          localStorage.removeItem(authKey); setPendingAuth(false)
-          setMessage(latest ? 'Đã xác minh uỷ quyền on-chain.' : 'Chưa có uỷ quyền on-chain; có thể ký yêu cầu mới.')
-        } else if (!attempt.blockhash) {
-          setMessage('Bản ghi cũ cần đối chiếu signature: ' + (attempt.signature || 'không có') + '. Chưa đủ bằng chứng để ký lại.')
+          if (latest || outcome === 'RETRY_SAFE') {
+            localStorage.removeItem(authKey); setPendingAuth(false)
+            setMessage(latest ? 'Đã xác minh uỷ quyền on-chain.' : 'Chưa có uỷ quyền on-chain; có thể ký yêu cầu mới.')
+          } else {
+            setMessage('Giao dịch đã confirmed; đang chờ tài khoản uỷ quyền finalized. Chỉ kiểm tra lại, không ký lại.')
+          }
+        } else if (wallet.current === current && localStorage.getItem(authKey) === saved) {
+          setMessage('UNKNOWN: chưa xác định kết quả uỷ quyền. Dùng “Kiểm tra lại uỷ quyền”; không ký hoặc gửi lại giao dịch.')
         }
       }
     }
+  }
+  async function reconcileManually() {
+    if (lock.current || reconciling) return
+    setReconciling(true)
+    try { await refresh() }
+    catch { setMessage('Chưa đọc được trạng thái Devnet. Giữ nguyên uỷ quyền đang chờ; có thể kiểm tra lại.') }
+    finally { setReconciling(false) }
   }
   useEffect(() => {
     setLoaded(false); setAuthorization(null); setPendingAuth(!!localStorage.getItem(authKey)); setMessage('')
@@ -125,6 +138,8 @@ export function GenuineNftPurchase({ discovery, candidate, owner, ready, disable
     {authorization && !approved && <p>Uỷ quyền hiện tại đã hết hạn, không khớp hoặc không đủ ngân sách. Cần chủ ví xử lý trước; Na không tự tăng hạn mức.</p>}
     {!authorization && <button disabled={disabled || busy || !ready || !loaded || pendingAuth} onClick={() => void authorize()}>
       {pendingAuth ? 'Đang xác minh uỷ quyền — không ký lại' : `Ký uỷ quyền NFT tối đa ${Number(ceiling) / 1e9} SOL · tối đa 1 giờ`}</button>}
+    {pendingAuth && <button disabled={busy || reconciling || !ready} onClick={() => void reconcileManually()}>
+      {reconciling ? 'Đang kiểm tra Devnet…' : 'Kiểm tra lại uỷ quyền'}</button>}
     <button disabled={disabled || busy || !ready || !approved || !live} onClick={() => void buy()}>Mua NFT gốc trên Devnet</button>
     <p role="status">{message}</p>
   </section>
